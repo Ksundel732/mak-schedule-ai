@@ -1,0 +1,99 @@
+// use prisma-8
+
+enum UserRole {
+  EMPLOYEE
+  MANAGER
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AvailabilityType {
+  PERMANENT
+  WEEKLY_CHANGE
+}
+
+model Employee {
+  id       Int      @id @default(autoincrement())
+  name     String
+  username String   @unique
+  password String
+  role     UserRole @default(EMPLOYEE)
+  isMinor  Boolean  @default(false)
+
+  availabilities Availability[]
+  skills         EmployeeSkill[]
+  requests       WeeklyRequest[]
+  shifts         Shift[]
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+}
+
+model Skill {
+  id        Int             @id @default(autoincrement())
+  name      String          @unique
+  employees EmployeeSkill[]
+
+  createdAt TimestamptzString @default(now())
+}
+
+model EmployeeSkill {
+  id         Int      @id @default(autoincrement())
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  employeeId Int
+  skill      Skill    @relation(fields: [skillId], references: [id])
+  skillId    Int
+
+  createdAt TimestamptzString @default(now())
+}
+
+model Availability {
+  id         Int      @id @default(autoincrement())
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  employeeId Int
+
+  type      AvailabilityType
+  dayOfWeek Int
+  startTime String
+  endTime   String
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+}
+
+model WeeklyRequest {
+  id         Int      @id @default(autoincrement())
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  employeeId Int
+
+  weekStart String
+  daysOff   String?
+  changes   String?
+
+  status RequestStatus @default(PENDING)
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+}
+
+model Shift {
+  id             Int      @id @default(autoincrement())
+  employee       Employee @relation(fields: [employeeId], references: [id])
+  employeeId     Int
+
+  date           String
+  startTime      String
+  endTime        String
+  role           String
+
+  ordersForecast Int?
+  workersCount   Int?
+  jipik          Float?
+
+  createdAt TimestamptzString @default(now())
+  updatedAt temporal.updatedAtString()
+}

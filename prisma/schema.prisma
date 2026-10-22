@@ -1,0 +1,110 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  EMPLOYEE
+  MANAGER
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ChangeMode {
+  SAME
+  TIME
+  OFF
+}
+
+model Employee {
+  id              Int                    @id @default(autoincrement())
+  name            String
+  username        String                 @unique
+  password        String
+  role            UserRole               @default(EMPLOYEE)
+  isMinor         Boolean                @default(false)
+  createdAt       DateTime               @default(now())
+  availabilities  PermanentAvailability[]
+  skills          EmployeeSkill[]
+  requests        AvailabilityRequest[]
+  shifts          Shift[]
+}
+
+model PermanentAvailability {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  dayOfWeek  Int
+  isOff      Boolean  @default(false)
+  startTime  String?
+  endTime    String?
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, dayOfWeek])
+}
+
+model Skill {
+  id        Int             @id @default(autoincrement())
+  name      String          @unique
+  employees EmployeeSkill[]
+}
+
+model EmployeeSkill {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  skillId    Int
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  skill      Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, skillId])
+}
+
+model AvailabilityRequest {
+  id         Int                   @id @default(autoincrement())
+  employeeId Int
+  weekStart  DateTime
+  status     RequestStatus         @default(PENDING)
+  comment    String?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
+  employee   Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  days       AvailabilityRequestDay[]
+
+  @@index([employeeId, weekStart])
+  @@index([status])
+}
+
+model AvailabilityRequestDay {
+  id        Int                @id @default(autoincrement())
+  requestId Int
+  dayOfWeek Int
+  mode      ChangeMode         @default(SAME)
+  startTime String?
+  endTime   String?
+  request   AvailabilityRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, dayOfWeek])
+}
+
+model Shift {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  date       DateTime
+  startTime  String
+  endTime    String
+  breakMins  Int      @default(30)
+  roleName   String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([date])
+  @@index([employeeId, date])
+}
