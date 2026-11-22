@@ -33,48 +33,104 @@ function createInitialChanges(): Record<string, DayChange> {
   return result;
 }
 
+const requestStatusLabels: Record<string, string> = {
+  PENDING: "На рассмотрении",
+  APPROVED: "Подтверждена",
+  REJECTED: "Отклонена",
+};
+
+// Понедельник текущей недели (в UTC, как хранятся даты смен)
+function getWeekStart(value: Date) {
+  const date = new Date(
+    Date.UTC(value.getFullYear(), value.getMonth(), value.getDate())
+  );
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return date;
+}
+
+// Список изменённых дней заявки: «Пятница — 18:00–22:00», «Суббота — Выходной»
+function describeRequestDays(request: any) {
+  if (!Array.isArray(request?.days)) return [];
+
+  return request.days
+    .filter((day: any) => day.mode !== "SAME")
+    .map((day: any) => ({
+      dayOfWeek: day.dayOfWeek as number,
+      name: days[day.dayOfWeek - 1]?.name || `День ${day.dayOfWeek}`,
+      off: day.mode === "OFF",
+      text:
+        day.mode === "OFF"
+          ? "Выходной"
+          : `${day.startTime || "?"}–${day.endTime || "?"}`,
+    }));
+}
+
 export default function Home() {
   async function updateRequestStatus(
-  requestId: number,
-  status: "APPROVED" | "REJECTED"
-) {
-  try {
-    const response = await fetch("/api/requests/status", {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        id: requestId,
-        status,
-      }),
-    });
+    request: any,
+    status: "APPROVED" | "REJECTED"
+  ) {
+    try {
+      const response = await fetch("/api/requests/status", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: request.id,
+          status,
+        }),
+      });
 
-    const data = await response.json();
+      const data = await response.json();
 
-    if (!response.ok) {
-      console.error("Ошибка изменения статуса:", data);
-      return;
+      if (!response.ok) {
+        console.error("Ошибка изменения статуса:", data);
+        alert(data.error || "Не удалось изменить статус заявки");
+        return;
+      }
+
+      setManagerRequests((current) =>
+        current.map((item) =>
+          item.id === request.id ? { ...item, status } : item
+        )
+      );
+
+      // После подтверждения сразу пересобираем график недели
+      // с учётом одобренного изменения и показываем его.
+      if (status === "APPROVED") {
+        const scheduleResponse = await fetch("/api/schedule/generate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            weekStart: String(request.weekStart).slice(0, 10),
+          }),
+        });
+
+        const scheduleData = await scheduleResponse.json();
+
+        if (scheduleResponse.ok && Array.isArray(scheduleData.shifts)) {
+          setShifts(scheduleData.shifts);
+        } else {
+          alert(
+            scheduleData.error ||
+              "Заявка подтверждена, но график обновить не удалось"
+          );
+        }
+      }
+    } catch (error) {
+      console.error("UPDATE_REQUEST_STATUS_ERROR:", error);
     }
-
-    setManagerRequests((current) =>
-      current.map((request) =>
-        request.id === requestId
-          ? { ...request, status }
-          : request
-      )
-    );
-  } catch (error) {
-    console.error("UPDATE_REQUEST_STATUS_ERROR:", error);
   }
-}
   const [managerRequests, setManagerRequests] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
-  useEffect(() => {
-  console.log("MANAGER REQUESTS STATE CHANGED:", managerRequests);
-}, [managerRequests]);
+  const [myShifts, setMyShifts] = useState<any[]>([]);
+  const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [currentEmployeeName, setCurrentEmployeeName] = useState("");
   const [employees, setEmployees] = useState<any[]>([]);
-  console.log("EMPLOYEES STATE EXISTS");
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -246,6 +302,51 @@ useEffect(() => {
   const [requestSent, setRequestSent] =
     useState(false);
 
+  async function loadMyData(employeeId: number) {
+    try {
+      const [shiftsResponse, requestsResponse] = await Promise.all([
+        fetch("/api/schedule", { cache: "no-store" }),
+        fetch("/api/requests", { cache: "no-store" }),
+      ]);
+
+      const shiftsData = await shiftsResponse.json();
+      const requestsData = await requestsResponse.json();
+
+      if (shiftsResponse.ok && Array.isArray(shiftsData.shifts)) {
+        const weekStart = getWeekStart(new Date());
+
+        setMyShifts(
+          shiftsData.shifts.filter(
+            (shift: any) =>
+              shift.employeeId === employeeId &&
+              new Date(shift.date) >= weekStart
+          )
+        );
+      }
+
+      if (requestsResponse.ok && Array.isArray(requestsData.requests)) {
+        setMyRequests(
+          requestsData.requests.filter(
+            (item: any) => item.employeeId === employeeId
+          )
+        );
+      }
+    } catch (error) {
+      console.error("LOAD_MY_DATA_ERROR:", error);
+    }
+  }
+
+  useEffect(() => {
+    if (!loggedIn || !currentEmployeeId) return;
+
+    loadMyData(currentEmployeeId);
+
+    // Статус заявки и график обновляются сами каждые 10 секунд
+    const timer = setInterval(() => loadMyData(currentEmployeeId), 10000);
+
+    return () => clearInterval(timer);
+  }, [loggedIn, currentEmployeeId]);
+
   async function handleLogin(e: React.FormEvent) {
   e.preventDefault();
 
@@ -269,6 +370,8 @@ useEffect(() => {
       setError(data.error || "Неверный логин или пароль");
       return;
     }
+
+    setCurrentEmployeeName(data.employee.name || "");
 
     if (data.employee.role === "MANAGER") {
   setCurrentEmployeeId(data.employee.id);
@@ -349,8 +452,8 @@ async function submitRequest(e: React.FormEvent) {
       return;
     }
 
-    console.log("Заявка сохранена:", data.request);
     setRequestSent(true);
+    loadMyData(currentEmployeeId);
     setShowRequest(false);
     setComment("");
     setChanges(createInitialChanges());
@@ -375,8 +478,20 @@ async function submitRequest(e: React.FormEvent) {
    */
 
   if (managerLoggedIn) {
-    console.log("MANAGER REQUESTS:", managerRequests);
-console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
+    const pendingRequests = managerRequests.filter(
+      (request) => request.status === "PENDING"
+    );
+    const sortedRequests = [
+      ...pendingRequests,
+      ...managerRequests.filter((request) => request.status !== "PENDING"),
+    ];
+    const todayDate = new Date();
+    const todayKey = `${todayDate.getFullYear()}-${String(
+      todayDate.getMonth() + 1
+    ).padStart(2, "0")}-${String(todayDate.getDate()).padStart(2, "0")}`;
+    const shiftsToday = shifts.filter(
+      (shift) => String(shift.date).slice(0, 10) === todayKey
+    ).length;
     return (
       <main className="dashboard-page">
 
@@ -408,10 +523,6 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
             <h1>
   Добрый вечер! 👋
 </h1>
-
-<p style={{ color: "red", fontWeight: 700 }}>
-  ОТЛАДКА: заявок загружено — {managerRequests.length}
-</p>
 
             <p>
               Управление сотрудниками,
@@ -448,11 +559,11 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
 
             <div>
               <strong>
-                {managerRequests.length}
+                {pendingRequests.length}
               </strong>
 
               <p>
-                Заявки
+                Новых заявок
               </p>
             </div>
 
@@ -463,7 +574,7 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
             <span>📅</span>
 
             <div>
-              <strong>5</strong>
+              <strong>{shiftsToday}</strong>
 
               <p>
                 Смен сегодня
@@ -508,107 +619,131 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
               </div>
 
               <span className="counter">
-                {requestSent ? "1" : "3"}
+                {pendingRequests.length}
               </span>
 
             </div>
 
-            <div className="request-manager">
-
-              <div className="request-person">
-
-                <div className="small-avatar">
-                  К
-                </div>
-
-                <div>
-
-                  <strong>
-                    Катя
-                  </strong>
-
-                  <span>
-                    Касса · Выдача · Прилавок
-                  </span>
-
-                </div>
-
+            {sortedRequests.length === 0 ? (
+              <div
+                style={{
+                  padding: "28px",
+                  textAlign: "center",
+                  color: "#718078",
+                  background: "#fbfdfc",
+                  border: "1px dashed #d5e4db",
+                  borderRadius: "12px",
+                }}
+              >
+                Новых заявок нет
               </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "14px",
+                }}
+              >
+                {sortedRequests.map((request) => {
+                  const employeeName =
+                    request.employee?.name || `ID ${request.employeeId}`;
+                  const skillNames: string[] = Array.isArray(
+                    request.employee?.skills
+                  )
+                    ? request.employee.skills
+                        .map((item: any) => item.skill?.name)
+                        .filter(Boolean)
+                    : [];
+                  const changedDays = describeRequestDays(request);
 
-              <div className="request-changes">
+                  return (
+                    <div className="request-manager" key={request.id}>
 
-                <div>
+                      <div className="request-person">
 
-                  <b>
-                    Пятница
-                  </b>
+                        <div className="small-avatar">
+                          {employeeName.charAt(0).toUpperCase()}
+                        </div>
 
-                  <span>
-                    18:00–22:00
-                  </span>
+                        <div>
+                          <strong>{employeeName}</strong>
+                          <span>
+                            {skillNames.length > 0
+                              ? skillNames.join(" · ")
+                              : "Навыки не указаны"}
+                          </span>
+                        </div>
 
-                </div>
+                      </div>
 
-                <div>
+                      <div className="request-changes">
+                        {changedDays.length === 0 ? (
+                          <div>
+                            <span>Без изменений</span>
+                          </div>
+                        ) : (
+                          changedDays.map((day) => (
+                            <div key={day.dayOfWeek}>
+                              <b>{day.name}</b>
+                              <span className={day.off ? "off" : ""}>
+                                {day.text}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
 
-                  <b>
-                    Суббота
-                  </b>
+                      <div className="request-comment">
+                        {request.comment
+                          ? `«${request.comment}»`
+                          : "Заявка на изменение"}
+                      </div>
 
-                  <span className="off">
-                    Выходной
-                  </span>
+                      {request.status === "PENDING" ? (
+                        <div className="manager-actions">
 
-                </div>
+                          <button
+                            type="button"
+                            className="reject-button"
+                            onClick={() =>
+                              updateRequestStatus(request, "REJECTED")
+                            }
+                          >
+                            Отклонить
+                          </button>
 
+                          <button
+                            type="button"
+                            className="approve-button"
+                            onClick={() =>
+                              updateRequestStatus(request, "APPROVED")
+                            }
+                          >
+                            Подтвердить
+                          </button>
+
+                        </div>
+                      ) : (
+                        <div className="manager-actions">
+                          <span
+                            className={
+                              request.status === "APPROVED"
+                                ? "request-status approved"
+                                : "request-status rejected"
+                            }
+                          >
+                            {requestStatusLabels[request.status] ||
+                              request.status}
+                          </span>
+                        </div>
+                      )}
+
+                    </div>
+                  );
+                })}
               </div>
-
-              <div className="request-comment">
-
-                {requestSent
-                  ? "«Из-за учебы»"
-                  : "Заявка на изменение"}
-
-              </div>
-
-              <div className="manager-actions">
-
-                <button
-                  className="reject-button"
-                  onClick={() =>
-                    alert(
-                      "Заявка отклонена"
-                    )
-                  }
-                >
-                  Отклонить
-                </button>
-
-                <button
-                  className="edit-button"
-                  onClick={() =>
-                    alert(
-                      "Открываем редактирование заявки"
-                    )
-                  }
-                >
-                  Изменить
-                </button>
-
-                <button
-                  className="approve-button"
-                  onClick={() =>
-                    alert(
-                      "Заявка подтверждена"
-                    )
-                  }
-                >
-                  Подтвердить
-                </button>
-
-              </div>
-
-            </div>
+            )}
 
           </div>
 
@@ -899,197 +1034,6 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
           )}
         </section>
 
-<section
-  style={{
-    marginTop: "32px",
-    background: "#ffffff",
-    borderRadius: "20px",
-    padding: "24px",
-    boxShadow: "0 4px 20px rgba(0, 0, 0, 0.06)",
-  }}
->
-  <div
-    style={{
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      marginBottom: "20px",
-    }}
-  >
-    <div>
-      <h2
-        style={{
-          margin: 0,
-          fontSize: "22px",
-          fontWeight: 700,
-        }}
-      >
-        Заявки сотрудников
-      </h2>
-
-      <p
-        style={{
-          margin: "6px 0 0",
-          color: "#777",
-          fontSize: "14px",
-        }}
-      >
-        Заявки на изменение графика
-      </p>
-    </div>
-
-    <div
-      style={{
-        background: "#e9f7ef",
-        color: "#168a4a",
-        borderRadius: "12px",
-        padding: "8px 14px",
-        fontWeight: 700,
-      }}
-    >
-      {managerRequests.length} новых
-    </div>
-  </div>
-
-  {managerRequests.length === 0 ? (
-    <div
-      style={{
-        padding: "30px",
-        textAlign: "center",
-        color: "#888",
-        background: "#f8f9f8",
-        borderRadius: "14px",
-      }}
-    >
-      Новых заявок нет
-    </div>
-  ) : (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "14px",
-      }}
-    >
-      {managerRequests.map((request) => (
-        <div
-          key={request.id}
-          style={{
-            border: "1px solid #e5e5e5",
-            borderRadius: "16px",
-            padding: "18px",
-            background: "#fafafa",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              gap: "20px",
-            }}
-          >
-            <div>
-              <h3
-                style={{
-                  margin: "0 0 8px",
-                  fontSize: "17px",
-                }}
-              >
-                Заявка №{request.id}
-              </h3>
-
-              <p style={{ margin: "5px 0" }}>
-                <strong>Сотрудник:</strong> {request.employee?.name || `ID ${request.employeeId}`}
-              </p>
-
-              <p style={{ margin: "5px 0" }}>
-                <strong>Неделя:</strong> {request.weekStart}
-              </p>
-
-              <p style={{ margin: "5px 0" }}>
-                <strong>Изменения:</strong>{" "}
-                {Array.isArray(request.days) && request.days.some((day: any) => day.mode !== "SAME")
-                  ? request.days
-                      .filter((day: any) => day.mode !== "SAME")
-                      .map((day: any) => {
-                        const dayName = days.find((item) => item.id === ({
-                          1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat", 7: "sun",
-                        } as Record<number, string>)[day.dayOfWeek])?.name || `День ${day.dayOfWeek}`;
-                        if (day.mode === "OFF") return `${dayName}: выходной`;
-                        return `${dayName}: ${day.startTime || "?"}–${day.endTime || "?"}`;
-                      })
-                      .join("; ")
-                  : "без изменений"}
-              </p>
-              {request.comment && (
-                <p style={{ margin: "5px 0" }}>
-                  <strong>Комментарий:</strong> {request.comment}
-                </p>
-              )}
-            </div>
-
-            <span
-              style={{
-                background: "#fff4d6",
-                color: "#9a6b00",
-                padding: "7px 12px",
-                borderRadius: "10px",
-                fontSize: "13px",
-                fontWeight: 700,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {request.status === "PENDING"
-                ? "На рассмотрении"
-                : request.status}
-            </span>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              gap: "10px",
-              marginTop: "18px",
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => updateRequestStatus(request.id, "APPROVED")}
-              style={{
-                border: "none",
-                background: "#168a4a",
-                color: "#ffffff",
-                padding: "10px 18px",
-                borderRadius: "10px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Одобрить
-            </button>
-
-            <button
-              type="button"
-              onClick={() => updateRequestStatus(request.id, "REJECTED")}
-              style={{
-                border: "1px solid #ddd",
-                background: "#ffffff",
-                color: "#555",
-                padding: "10px 18px",
-                borderRadius: "10px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Отклонить
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  )}
-</section>
       </main>
     );
   }
@@ -1135,7 +1079,7 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
               <div>
 
                 <h1>
-                  Привет, Катя! 👋
+                  Привет, {currentEmployeeName || "коллега"}! 👋
                 </h1>
 
                 <p>
@@ -1147,7 +1091,7 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
               </div>
 
               <div className="employee-avatar">
-                К
+                {(currentEmployeeName || "?").charAt(0).toUpperCase()}
               </div>
 
             </section>
@@ -1164,21 +1108,35 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
                   Мой график
                 </h2>
 
-                <p>
-                  Посмотри назначенные тебе
-                  смены на текущую неделю.
-                </p>
+                {myShifts.length === 0 ? (
+                  <p>
+                    Смен пока нет. График появится
+                    здесь, когда менеджер его утвердит.
+                  </p>
+                ) : (
+                  <div className="availability">
+                    {myShifts.map((shift) => {
+                      const shiftDate = new Date(shift.date);
+                      const dateLabel = Number.isNaN(shiftDate.getTime())
+                        ? String(shift.date)
+                        : shiftDate.toLocaleDateString("ru-RU", {
+                            timeZone: "UTC",
+                            weekday: "short",
+                            day: "2-digit",
+                            month: "2-digit",
+                          });
 
-                <button
-                  className="green-button"
-                  onClick={() =>
-                    alert(
-                      "Раздел графика будет следующим этапом"
-                    )
-                  }
-                >
-                  Открыть график
-                </button>
+                      return (
+                        <div key={shift.id}>
+                          <b>{dateLabel}</b>
+                          <span>
+                            {shift.startTime}–{shift.endTime} · {shift.roleName}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
               </div>
 
@@ -1308,7 +1266,7 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
                 </h2>
 
                 <p>
-                  {requestSent
+                  {myRequests.length > 0 || requestSent
                     ? "Изменение доступности на текущую неделю"
                     : "Заявок пока нет"}
                 </p>
@@ -1317,12 +1275,21 @@ console.log("MANAGER REQUESTS COUNT:", managerRequests.length);
 
               <div
                 className={
-                  requestSent
+                  myRequests.length > 0
+                    ? myRequests[0].status === "APPROVED"
+                      ? "request-status approved"
+                      : myRequests[0].status === "REJECTED"
+                      ? "request-status rejected"
+                      : "request-status"
+                    : requestSent
                     ? "request-status"
                     : "request-status empty"
                 }
               >
-                {requestSent
+                {myRequests.length > 0
+                  ? requestStatusLabels[myRequests[0].status] ||
+                    myRequests[0].status
+                  : requestSent
                   ? "На рассмотрении"
                   : "Нет заявок"}
               </div>

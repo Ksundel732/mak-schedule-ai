@@ -485,6 +485,18 @@ textarea {
   font-weight: 700;
 }
 
+.request-status.approved {
+  background: #e7f6ec;
+
+  color: #087f3e;
+}
+
+.request-status.rejected {
+  background: #fdecec;
+
+  color: #b42318;
+}
+
 .request-status.empty {
   background: #eef3f0;
 

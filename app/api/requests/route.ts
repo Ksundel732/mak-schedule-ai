@@ -24,6 +24,11 @@ export async function GET() {
             id: true,
             name: true,
             username: true,
+            skills: {
+              select: {
+                skill: { select: { name: true } },
+              },
+            },
           },
         },
         days: true,
