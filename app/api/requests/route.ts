@@ -137,13 +137,16 @@ export async function POST(request: Request) {
       where: {
         employeeId,
         weekStart,
-        status: "PENDING",
+        status: { in: ["PENDING", "COUNTER"] },
       },
     });
 
     if (existingRequest) {
       return NextResponse.json(
-        { error: "У тебя уже есть заявка на эту неделю, ожидающая рассмотрения" },
+        {
+          error:
+            "У тебя уже есть незавершённая заявка на эту неделю. Дождись решения менеджера или ответь на его предложение",
+        },
         { status: 409 }
       );
     }

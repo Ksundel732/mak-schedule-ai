@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { splitComment } from "../src/lib/request-meta";
 
 type DayChange = {
   mode: "same" | "time" | "off";
@@ -37,7 +38,16 @@ const requestStatusLabels: Record<string, string> = {
   PENDING: "На рассмотрении",
   APPROVED: "Подтверждена",
   REJECTED: "Отклонена",
+  COUNTER: "Предложен другой вариант",
+  DECLINED: "Отклонена сотрудником",
 };
+
+function statusClassName(status: string) {
+  if (status === "APPROVED") return "request-status approved";
+  if (status === "REJECTED" || status === "DECLINED")
+    return "request-status rejected";
+  return "request-status";
+}
 
 // Понедельник текущей недели (в UTC, как хранятся даты смен)
 function getWeekStart(value: Date) {
@@ -169,6 +179,98 @@ export default function Home() {
     }
   }
   const [managerRequests, setManagerRequests] = useState<any[]>([]);
+  const [managerTab, setManagerTab] = useState<"new" | "history">("new");
+  const [historyLimit, setHistoryLimit] = useState(10);
+  const [proposeId, setProposeId] = useState<number | null>(null);
+  const [proposeChanges, setProposeChanges] = useState<
+    Record<string, DayChange>
+  >(createInitialChanges());
+  const [proposeNote, setProposeNote] = useState("");
+
+  function openPropose(request: any) {
+    const initial = createInitialChanges();
+
+    if (Array.isArray(request?.days)) {
+      days.forEach((day, index) => {
+        const item = request.days.find(
+          (entry: any) => entry.dayOfWeek === index + 1
+        );
+
+        if (item?.mode === "OFF") {
+          initial[day.id] = { mode: "off", start: "17:00", end: "22:00" };
+        } else if (item?.mode === "TIME") {
+          initial[day.id] = {
+            mode: "time",
+            start: item.startTime || "17:00",
+            end: item.endTime || "22:00",
+          };
+        }
+      });
+    }
+
+    setProposeChanges(initial);
+    setProposeNote("");
+    setProposeId(request.id);
+  }
+
+  function updateProposeDay(
+    dayId: string,
+    field: keyof DayChange,
+    value: string
+  ) {
+    setProposeChanges((current) => ({
+      ...current,
+      [dayId]: { ...current[dayId], [field]: value },
+    }));
+  }
+
+  async function submitProposal(request: any) {
+    try {
+      const response = await fetch("/api/requests/propose", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: request.id,
+          note: proposeNote,
+          days: days.map((day, index) => {
+            const change = proposeChanges[day.id];
+
+            return {
+              dayOfWeek: index + 1,
+              mode:
+                change.mode === "off"
+                  ? "OFF"
+                  : change.mode === "time"
+                  ? "TIME"
+                  : "SAME",
+              startTime: change.mode === "time" ? change.start : null,
+              endTime: change.mode === "time" ? change.end : null,
+            };
+          }),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.error || "Не удалось отправить вариант");
+        return;
+      }
+
+      setManagerRequests((current) =>
+        current.map((item) =>
+          item.id === request.id
+            ? { ...item, ...data.request, employee: item.employee }
+            : item
+        )
+      );
+      setProposeId(null);
+    } catch (error) {
+      console.error("SUBMIT_PROPOSAL_ERROR:", error);
+      alert("Не удалось подключиться к серверу");
+    }
+  }
+
   const [shifts, setShifts] = useState<any[]>([]);
   const [myShifts, setMyShifts] = useState<any[]>([]);
   const [myRequests, setMyRequests] = useState<any[]>([]);
@@ -346,6 +448,66 @@ useEffect(() => {
 
   const [requestSent, setRequestSent] =
     useState(false);
+
+  // Менеджер видит ответ сотрудника без перезагрузки страницы
+  useEffect(() => {
+    if (!managerLoggedIn || proposeId !== null) return;
+
+    const timer = setInterval(async () => {
+      try {
+        const response = await fetch("/api/requests", { cache: "no-store" });
+        const data = await response.json();
+
+        if (response.ok && Array.isArray(data.requests)) {
+          setManagerRequests(data.requests);
+        }
+      } catch (error) {
+        console.error("REFRESH_REQUESTS_ERROR:", error);
+      }
+    }, 15000);
+
+    return () => clearInterval(timer);
+  }, [managerLoggedIn, proposeId]);
+
+  async function respondToProposal(request: any, action: "accept" | "decline") {
+    if (!currentEmployeeId) return;
+
+    try {
+      const response = await fetch("/api/requests/respond", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: request.id,
+          employeeId: currentEmployeeId,
+          action,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.error || "Не удалось отправить ответ");
+        loadMyData(currentEmployeeId);
+        return;
+      }
+
+      // После согласия график недели пересобирается с новым вариантом
+      if (action === "accept") {
+        await fetch("/api/schedule/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            weekStart: String(request.weekStart).slice(0, 10),
+          }),
+        });
+      }
+
+      loadMyData(currentEmployeeId);
+    } catch (error) {
+      console.error("RESPOND_PROPOSAL_ERROR:", error);
+      alert("Не удалось подключиться к серверу");
+    }
+  }
 
   async function loadMyData(employeeId: number) {
     try {
@@ -540,10 +702,26 @@ async function submitRequest(e: React.FormEvent) {
     const pendingRequests = managerRequests.filter(
       (request) => request.status === "PENDING"
     );
-    const sortedRequests = [
+    // «Новые»: ждут решения менеджера или ответа сотрудника
+    const activeRequests = [
       ...pendingRequests,
-      ...managerRequests.filter((request) => request.status !== "PENDING"),
+      ...managerRequests.filter((request) => request.status === "COUNTER"),
     ];
+    // «История»: всё, что уже решено, самые свежие сверху
+    const historyRequests = managerRequests
+      .filter(
+        (request) =>
+          request.status !== "PENDING" && request.status !== "COUNTER"
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt ?? b.createdAt).getTime() -
+          new Date(a.updatedAt ?? a.createdAt).getTime()
+      );
+    const visibleRequests =
+      managerTab === "new"
+        ? activeRequests
+        : historyRequests.slice(0, historyLimit);
     const todayDate = new Date();
     const todayKey = `${todayDate.getFullYear()}-${String(
       todayDate.getMonth() + 1
@@ -667,34 +845,63 @@ async function submitRequest(e: React.FormEvent) {
               <div>
 
                 <h2>
-                  Заявки на эту неделю
+                  Заявки сотрудников
                 </h2>
 
                 <p>
-                  Изменения доступности
-                  сотрудников
+                  Изменения доступности сотрудников
                 </p>
 
               </div>
 
               <span className="counter">
-                {pendingRequests.length}
+                {activeRequests.length}
               </span>
 
             </div>
 
-            {sortedRequests.length === 0 ? (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+              {(
+                [
+                  { id: "new", label: "Новые", count: activeRequests.length },
+                  { id: "history", label: "История", count: historyRequests.length },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setManagerTab(tab.id)}
+                  style={{
+                    padding: "9px 16px",
+                    borderRadius: "10px",
+                    border: "1px solid",
+                    borderColor: managerTab === tab.id ? "#087f3e" : "#d5e2da",
+                    background: managerTab === tab.id ? "#087f3e" : "white",
+                    color: managerTab === tab.id ? "white" : "#30493a",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {tab.label} · {tab.count}
+                </button>
+              ))}
+            </div>
+
+            {visibleRequests.length === 0 ? (
               <div
                 style={{
                   padding: "28px",
                   textAlign: "center",
                   color: "#718078",
                   background: "#fbfdfc",
-                  border: "1px dashed #d5e4db",
+                  border: "1px dashed #d5e2da",
                   borderRadius: "12px",
                 }}
               >
-                Новых заявок нет
+                {managerTab === "new"
+                  ? "Новых заявок нет"
+                  : "Решённых заявок пока нет"}
               </div>
             ) : (
               <div
@@ -704,7 +911,7 @@ async function submitRequest(e: React.FormEvent) {
                   gap: "14px",
                 }}
               >
-                {sortedRequests.map((request) => {
+                {visibleRequests.map((request) => {
                   const employeeName =
                     request.employee?.name || `ID ${request.employeeId}`;
                   const skillNames: string[] = Array.isArray(
@@ -715,104 +922,262 @@ async function submitRequest(e: React.FormEvent) {
                         .filter(Boolean)
                     : [];
                   const changedDays = describeRequestDays(request);
+                  const commentParts = splitComment(request.comment);
+                  const isEditing = proposeId === request.id;
 
                   return (
-                    <div className="request-manager" key={request.id}>
+                    <div key={request.id}>
 
-                      <div className="request-person">
+                      <div className="request-manager">
 
-                        <div className="small-avatar">
-                          {employeeName.charAt(0).toUpperCase()}
-                        </div>
+                        <div className="request-person">
 
-                        <div>
-                          <strong>{employeeName}</strong>
-                          <span>
-                            {skillNames.length > 0
-                              ? skillNames.join(" · ")
-                              : "Навыки не указаны"}
-                          </span>
-                        </div>
-
-                      </div>
-
-                      <div className="request-changes">
-                        {changedDays.length === 0 ? (
-                          <div>
-                            <span>Без изменений</span>
+                          <div className="small-avatar">
+                            {employeeName.charAt(0).toUpperCase()}
                           </div>
-                        ) : (
-                          changedDays.map((day) => (
-                            <div key={day.dayOfWeek}>
-                              <b>{day.name}</b>
-                              <span className={day.off ? "off" : ""}>
-                                {day.text}
+
+                          <div>
+                            <strong>{employeeName}</strong>
+                            <span>
+                              {skillNames.length > 0
+                                ? skillNames.join(" · ")
+                                : "Навыки не указаны"}
+                            </span>
+                          </div>
+
+                        </div>
+
+                        <div className="request-changes">
+                          {request.status === "COUNTER" && (
+                            <div>
+                              <span style={{ fontWeight: 700 }}>
+                                Твой вариант:
                               </span>
                             </div>
-                          ))
-                        )}
-                      </div>
-
-                      <div className="request-comment">
-                        <div
-                          style={{
-                            fontSize: "11px",
-                            color: "#718078",
-                            marginBottom: "4px",
-                          }}
-                        >
-                          Неделя{" "}
-                          {formatWeekRange(
-                            mondayOfDateText(request.weekStart)
+                          )}
+                          {changedDays.length === 0 ? (
+                            <div>
+                              <span>Без изменений</span>
+                            </div>
+                          ) : (
+                            changedDays.map((day) => (
+                              <div key={day.dayOfWeek}>
+                                <b>{day.name}</b>
+                                <span className={day.off ? "off" : ""}>
+                                  {day.text}
+                                </span>
+                              </div>
+                            ))
                           )}
                         </div>
-                        {request.comment
-                          ? `«${request.comment}»`
-                          : "Заявка на изменение"}
+
+                        <div className="request-comment">
+                          <div
+                            style={{
+                              fontSize: "11px",
+                              color: "#718078",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            Неделя{" "}
+                            {formatWeekRange(
+                              mondayOfDateText(request.weekStart)
+                            )}
+                          </div>
+                          {commentParts.text
+                            ? `«${commentParts.text}»`
+                            : "Заявка на изменение"}
+                          {commentParts.managerNote && (
+                            <div style={{ marginTop: "6px" }}>
+                              Ответ менеджера: «{commentParts.managerNote}»
+                            </div>
+                          )}
+                        </div>
+
+                        {request.status === "PENDING" ? (
+                          <div className="manager-actions">
+
+                            <button
+                              type="button"
+                              className="reject-button"
+                              onClick={() =>
+                                updateRequestStatus(request, "REJECTED")
+                              }
+                            >
+                              Отклонить
+                            </button>
+
+                            <button
+                              type="button"
+                              className="edit-button"
+                              onClick={() => openPropose(request)}
+                            >
+                              Предложить вариант
+                            </button>
+
+                            <button
+                              type="button"
+                              className="approve-button"
+                              onClick={() =>
+                                updateRequestStatus(request, "APPROVED")
+                              }
+                            >
+                              Подтвердить
+                            </button>
+
+                          </div>
+                        ) : (
+                          <div className="manager-actions">
+                            <span className={statusClassName(request.status)}>
+                              {request.status === "COUNTER"
+                                ? "Ждём ответа сотрудника"
+                                : requestStatusLabels[request.status] ||
+                                  request.status}
+                            </span>
+                          </div>
+                        )}
+
                       </div>
 
-                      {request.status === "PENDING" ? (
-                        <div className="manager-actions">
-
-                          <button
-                            type="button"
-                            className="reject-button"
-                            onClick={() =>
-                              updateRequestStatus(request, "REJECTED")
-                            }
+                      {isEditing && (
+                        <div
+                          style={{
+                            marginTop: "8px",
+                            padding: "18px",
+                            border: "1px solid #b7dcc6",
+                            borderRadius: "12px",
+                            background: "#f4fbf7",
+                          }}
+                        >
+                          <strong style={{ display: "block", marginBottom: "4px" }}>
+                            Твой вариант для {employeeName}
+                          </strong>
+                          <p
+                            style={{
+                              margin: "0 0 14px",
+                              fontSize: "12px",
+                              color: "#718078",
+                            }}
                           >
-                            Отклонить
-                          </button>
+                            Исправь время или выходные. «Без изменений» значит
+                            постоянная доступность сотрудника. После отправки
+                            сотрудник сможет согласиться или отклонить.
+                          </p>
 
-                          <button
-                            type="button"
-                            className="approve-button"
-                            onClick={() =>
-                              updateRequestStatus(request, "APPROVED")
-                            }
-                          >
-                            Подтвердить
-                          </button>
+                          <div className="days-list">
+                            {days.map((day) => {
+                              const change = proposeChanges[day.id];
 
-                        </div>
-                      ) : (
-                        <div className="manager-actions">
-                          <span
-                            className={
-                              request.status === "APPROVED"
-                                ? "request-status approved"
-                                : "request-status rejected"
-                            }
-                          >
-                            {requestStatusLabels[request.status] ||
-                              request.status}
-                          </span>
+                              return (
+                                <div className="day-row" key={day.id}>
+
+                                  <div className="day-name">
+                                    <strong>{day.short}</strong>
+                                    <span>{day.name}</span>
+                                  </div>
+
+                                  <select
+                                    value={change.mode}
+                                    onChange={(e) =>
+                                      updateProposeDay(
+                                        day.id,
+                                        "mode",
+                                        e.target.value
+                                      )
+                                    }
+                                  >
+                                    <option value="same">Без изменений</option>
+                                    <option value="time">Изменить время</option>
+                                    <option value="off">Выходной</option>
+                                  </select>
+
+                                  {change.mode === "time" && (
+                                    <div className="time-fields">
+                                      <input
+                                        type="time"
+                                        value={change.start}
+                                        onChange={(e) =>
+                                          updateProposeDay(
+                                            day.id,
+                                            "start",
+                                            e.target.value
+                                          )
+                                        }
+                                      />
+                                      <span>—</span>
+                                      <input
+                                        type="time"
+                                        value={change.end}
+                                        onChange={(e) =>
+                                          updateProposeDay(
+                                            day.id,
+                                            "end",
+                                            e.target.value
+                                          )
+                                        }
+                                      />
+                                    </div>
+                                  )}
+
+                                  {change.mode === "off" && (
+                                    <div className="day-off-label">Выходной</div>
+                                  )}
+
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <div className="comment-block">
+                            <label>Комментарий для сотрудника</label>
+                            <textarea
+                              placeholder="Например: в пятницу нужен человек до закрытия"
+                              value={proposeNote}
+                              onChange={(e) => setProposeNote(e.target.value)}
+                            />
+                          </div>
+
+                          <div className="request-actions">
+                            <button
+                              type="button"
+                              className="cancel-button"
+                              onClick={() => setProposeId(null)}
+                            >
+                              Отмена
+                            </button>
+                            <button
+                              type="button"
+                              className="submit-button"
+                              onClick={() => submitProposal(request)}
+                            >
+                              Отправить вариант
+                            </button>
+                          </div>
                         </div>
                       )}
 
                     </div>
                   );
                 })}
+
+                {managerTab === "history" &&
+                  historyRequests.length > historyLimit && (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryLimit((value) => value + 10)}
+                      style={{
+                        padding: "10px",
+                        borderRadius: "10px",
+                        border: "1px solid #d5e2da",
+                        background: "white",
+                        color: "#30493a",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Показать ещё
+                    </button>
+                  )}
               </div>
             )}
 
@@ -1137,28 +1502,20 @@ async function submitRequest(e: React.FormEvent) {
       const base = myAvailability.find(
         (item) => item.dayOfWeek === dayOfWeek
       );
-      const change = Array.isArray(approvedForWeek?.days)
-        ? approvedForWeek.days.find(
-            (item: any) =>
-              item.dayOfWeek === dayOfWeek && item.mode !== "SAME"
-          )
-        : undefined;
-
       let text = "Выходной";
-      let changed = false;
 
-      if (change) {
-        changed = true;
-        text =
-          change.mode === "OFF"
-            ? "Выходной"
-            : `${change.startTime}–${change.endTime}`;
-      } else if (base && !base.isOff && base.startTime && base.endTime) {
+      if (base && !base.isOff && base.startTime && base.endTime) {
         text = `${base.startTime}–${base.endTime}`;
       }
 
-      return { id: day.id, short: day.short, text, changed };
+      return { id: day.id, short: day.short, text };
     });
+
+    // Заявки, на которые менеджер предложил другой вариант
+    const counterRequests = myRequests.filter(
+      (item) => item.status === "COUNTER"
+    );
+    const approvedChanges = describeRequestDays(approvedForWeek);
 
     return (
       <main className="dashboard-page">
@@ -1266,10 +1623,7 @@ async function submitRequest(e: React.FormEvent) {
                 </h2>
 
                 <p>
-                  Неделя {formatWeekRange(targetWeek)}.
-                  {approvedForWeek
-                    ? " Изменения из подтверждённой заявки отмечены ✎."
-                    : " Постоянное время, в которое ты можешь работать."}
+                  Постоянное время, в которое ты можешь работать.
                 </p>
 
                 <div className="availability">
@@ -1277,16 +1631,7 @@ async function submitRequest(e: React.FormEvent) {
                   {availabilityRows.map((row) => (
                     <div key={row.id}>
                       <b>{row.short}</b>
-                      <span
-                        style={
-                          row.changed
-                            ? { color: "#087f3e", fontWeight: 700 }
-                            : undefined
-                        }
-                      >
-                        {row.text}
-                        {row.changed ? " ✎" : ""}
-                      </span>
+                      <span>{row.text}</span>
                     </div>
                   ))}
 
@@ -1351,6 +1696,98 @@ async function submitRequest(e: React.FormEvent) {
 
             </section>
 
+            {counterRequests.map((item) => {
+              const parts = splitComment(item.comment);
+
+              return (
+                <section
+                  className="request-section"
+                  key={item.id}
+                  style={{
+                    flexDirection: "column",
+                    alignItems: "stretch",
+                    gap: "14px",
+                    background: "#fffdf5",
+                    borderColor: "#f0d78a",
+                  }}
+                >
+                  <div>
+                    <h2>Менеджер предложил другой вариант</h2>
+                    <p>
+                      Неделя{" "}
+                      {formatWeekRange(mondayOfDateText(item.weekStart))}.
+                      Согласись или отклони предложение.
+                    </p>
+                  </div>
+
+                  {parts.managerNote && (
+                    <div className="request-comment">
+                      «{parts.managerNote}»
+                    </div>
+                  )}
+
+                  <div className="request-changes">
+                    {describeRequestDays(item).length === 0 ? (
+                      <div>
+                        <span>Без изменений постоянной доступности</span>
+                      </div>
+                    ) : (
+                      describeRequestDays(item).map((day) => (
+                        <div key={day.dayOfWeek}>
+                          <b>{day.name}</b>
+                          <span className={day.off ? "off" : ""}>
+                            {day.text}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="manager-actions">
+                    <button
+                      type="button"
+                      className="reject-button"
+                      onClick={() => respondToProposal(item, "decline")}
+                    >
+                      Отклонить
+                    </button>
+                    <button
+                      type="button"
+                      className="approve-button"
+                      onClick={() => respondToProposal(item, "accept")}
+                    >
+                      Согласиться
+                    </button>
+                  </div>
+                </section>
+              );
+            })}
+
+            {approvedChanges.length > 0 && (
+              <section
+                className="request-section"
+                style={{
+                  flexDirection: "column",
+                  alignItems: "stretch",
+                  gap: "12px",
+                }}
+              >
+                <div>
+                  <h2>Изменения на неделю {formatWeekRange(targetWeek)}</h2>
+                  <p>Из подтверждённой заявки. Постоянная доступность не менялась.</p>
+                </div>
+
+                <div className="request-changes">
+                  {approvedChanges.map((day) => (
+                    <div key={day.dayOfWeek}>
+                      <b>{day.name} ✎</b>
+                      <span className={day.off ? "off" : ""}>{day.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             <section className="request-section">
 
               <div>
@@ -1370,11 +1807,7 @@ async function submitRequest(e: React.FormEvent) {
               <div
                 className={
                   myRequests.length > 0
-                    ? myRequests[0].status === "APPROVED"
-                      ? "request-status approved"
-                      : myRequests[0].status === "REJECTED"
-                      ? "request-status rejected"
-                      : "request-status"
+                    ? statusClassName(myRequests[0].status)
                     : requestSent
                     ? "request-status"
                     : "request-status empty"
