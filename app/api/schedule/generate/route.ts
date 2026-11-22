@@ -1,6 +1,10 @@
-
 import { NextResponse } from "next/server";
 import { prisma } from "../../../../src/lib/prisma";
+import {
+  planWeek,
+  toMinutes,
+  type PlannerEmployee,
+} from "../../../../src/lib/planner";
 
 export const runtime = "nodejs";
 
@@ -13,24 +17,6 @@ const DAY_NAMES = [
   "Суббота",
   "Воскресенье",
 ];
-
-function toMinutes(time: string) {
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours * 60 + minutes;
-}
-
-function toTime(minutes: number) {
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-
-  return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
-}
-
-function getBreakMinutes(duration: number) {
-  if (duration < 5.5 * 60) return 30;
-  if (duration < 7.5 * 60) return 45;
-  return 60;
-}
 
 function getMonday(value: Date) {
   const date = new Date(value);
@@ -62,6 +48,9 @@ export async function POST(request: Request) {
     const weekEnd = new Date(weekStart);
     weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
 
+    const prevStart = new Date(weekStart);
+    prevStart.setUTCDate(prevStart.getUTCDate() - 7);
+
     const employees = await prisma.employee.findMany({
       where: { role: "EMPLOYEE" },
       include: {
@@ -83,25 +72,20 @@ export async function POST(request: Request) {
       },
     });
 
-    const generated: Array<{
-      employeeId: number;
-      date: Date;
-      startTime: string;
-      endTime: string;
-      breakMins: number;
-      roleName: string;
-    }> = [];
+    // Смены прошлой недели нужны, чтобы считать рабочие дни подряд
+    const previousShifts = await prisma.shift.findMany({
+      where: { date: { gte: prevStart, lt: weekStart } },
+      select: { employeeId: true, date: true },
+    });
 
     const warnings: string[] = [];
 
-    for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
-      const date = new Date(weekStart);
-      date.setUTCDate(date.getUTCDate() + dayIndex);
+    const plannerEmployees: PlannerEmployee[] = employees.map((employee) => {
+      const windows: PlannerEmployee["windows"] = [];
 
-      const dayOfWeek = dayIndex + 1;
-      const roleCounts = new Map<string, number>();
+      for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+        const dayOfWeek = dayIndex + 1;
 
-      for (const employee of employees) {
         const availability = employee.availabilities.find(
           (item) => item.dayOfWeek === dayOfWeek
         );
@@ -114,7 +98,10 @@ export async function POST(request: Request) {
           (day) => day.dayOfWeek === dayOfWeek
         );
 
-        if (dayChange?.mode === "OFF") continue;
+        if (dayChange?.mode === "OFF") {
+          windows.push(null);
+          continue;
+        }
 
         // Без подтверждённой замены времени работаем только в дни
         // постоянной доступности. С заменой можно выйти и в обычный выходной.
@@ -122,6 +109,7 @@ export async function POST(request: Request) {
           dayChange?.mode !== "TIME" &&
           (!availability || availability.isOff)
         ) {
+          windows.push(null);
           continue;
         }
 
@@ -137,61 +125,60 @@ export async function POST(request: Request) {
           warnings.push(
             `${employee.name}: не указано время на ${DAY_NAMES[dayIndex]}`
           );
+          windows.push(null);
           continue;
         }
 
-        let start = toMinutes(startTime);
-        let end = toMinutes(endTime);
-
-        // В ресторане смены планируются с 07:00 до 00:00.
-        start = Math.max(start, 7 * 60);
-        end = Math.min(end, 24 * 60);
-
-        if (employee.isMinor) {
-          end = Math.min(end, 22 * 60);
-          end = Math.min(end, start + 8 * 60);
-        }
-
-        // Продолжительность смены — от 3 до 12 часов.
-        end = Math.min(end, start + 12 * 60);
-
-        const duration = end - start;
-
-        if (duration < 3 * 60) {
-          warnings.push(
-            `${employee.name}: нет подходящей смены на ${DAY_NAMES[dayIndex]}`
-          );
-          continue;
-        }
-
-        const skillNames = employee.skills
-          .map((item) => item.skill.name)
-          .sort((a, b) => {
-            return (
-              (roleCounts.get(a) ?? 0) -
-              (roleCounts.get(b) ?? 0)
-            );
-          });
-
-        const roleName = skillNames[0];
-
-        if (!roleName) {
-          warnings.push(`${employee.name}: не указаны обученные позиции`);
-          continue;
-        }
-
-        roleCounts.set(roleName, (roleCounts.get(roleName) ?? 0) + 1);
-
-        generated.push({
-          employeeId: employee.id,
-          date,
-          startTime: toTime(start),
-          endTime: toTime(end),
-          breakMins: getBreakMinutes(duration),
-          roleName,
+        windows.push({
+          start: toMinutes(startTime),
+          end: toMinutes(endTime),
         });
       }
-    }
+
+      // Сколько рабочих дней подряд было перед началом этой недели
+      const workedKeys = new Set(
+        previousShifts
+          .filter((shift) => shift.employeeId === employee.id)
+          .map((shift) => shift.date.toISOString().slice(0, 10))
+      );
+
+      let prevStreak = 0;
+      const cursor = new Date(weekStart);
+
+      for (let step = 0; step < 7; step++) {
+        cursor.setUTCDate(cursor.getUTCDate() - 1);
+
+        if (!workedKeys.has(cursor.toISOString().slice(0, 10))) break;
+
+        prevStreak += 1;
+      }
+
+      return {
+        id: employee.id,
+        name: employee.name,
+        isMinor: employee.isMinor,
+        skills: employee.skills.map((item) => item.skill.name),
+        windows,
+        prevStreak,
+      };
+    });
+
+    const plan = planWeek(plannerEmployees);
+    warnings.push(...plan.warnings);
+
+    const generated = plan.shifts.map((shift) => {
+      const date = new Date(weekStart);
+      date.setUTCDate(date.getUTCDate() + shift.dayIndex);
+
+      return {
+        employeeId: shift.employeeId,
+        date,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        breakMins: shift.breakMins,
+        roleName: shift.roleName,
+      };
+    });
 
     if (generated.length === 0) {
       return NextResponse.json(

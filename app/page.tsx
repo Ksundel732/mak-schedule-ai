@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { splitComment } from "../src/lib/request-meta";
+import { analyzeWeek, TARGET_GPIK } from "../src/lib/planner";
 
 type DayChange = {
   mode: "same" | "time" | "off";
@@ -718,6 +719,24 @@ async function submitRequest(e: React.FormEvent) {
           new Date(b.updatedAt ?? b.createdAt).getTime() -
           new Date(a.updatedAt ?? a.createdAt).getTime()
       );
+    // Анализ недели, на которую созданы последние смены
+    let analysis: ReturnType<typeof analyzeWeek> | null = null;
+    if (shifts.length > 0) {
+      const latestDate = shifts.reduce(
+        (max: string, shift: any) =>
+          String(shift.date) > max ? String(shift.date) : max,
+        ""
+      );
+      analysis = analyzeWeek(shifts, mondayOfDateText(latestDate));
+    }
+    const gpikColor = (value: number | null) =>
+      value === null
+        ? "#718078"
+        : value <= TARGET_GPIK * 1.1
+        ? "#087f3e"
+        : value <= TARGET_GPIK * 1.4
+        ? "#b7791f"
+        : "#b42318";
     const visibleRequests =
       managerTab === "new"
         ? activeRequests
@@ -825,10 +844,14 @@ async function submitRequest(e: React.FormEvent) {
             <span>🤖</span>
 
             <div>
-              <strong>6.1</strong>
+              <strong>
+                {analysis && analysis.avgGpik !== null
+                  ? analysis.avgGpik.toFixed(1)
+                  : "—"}
+              </strong>
 
               <p>
-                Средний джипик
+                Средний джипик (цель {TARGET_GPIK})
               </p>
             </div>
 
@@ -1324,10 +1347,10 @@ async function submitRequest(e: React.FormEvent) {
             </h2>
 
             <p>
-              Автоматически построить расписание,
-              учитывая доступность сотрудников,
-              обучение, нагрузку и показатель
-              джипик.
+              Автоматически построить расписание:
+              доступность и заявки сотрудников,
+              обучение по позициям, ожидаемые
+              заказы и целевой джипик {TARGET_GPIK}.
             </p>
 
           </div>
@@ -1380,6 +1403,65 @@ async function submitRequest(e: React.FormEvent) {
           </button>
 
         </section>
+
+        {analysis && (
+          <section
+            style={{
+              marginTop: "32px",
+              background: "#ffffff",
+              borderRadius: "20px",
+              padding: "24px",
+              boxShadow: "0 4px 20px rgba(0, 0, 0, 0.06)",
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>
+              Анализ недели
+            </h2>
+            <p style={{ margin: "6px 0 18px", color: "#777", fontSize: "14px" }}>
+              Джипик — заказы на одного работника в час. Цель: {TARGET_GPIK}.
+              Прогноз заказов пока примерный.
+            </p>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "640px" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", background: "#f4f8f5" }}>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>День</th>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Заказов</th>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Смен</th>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Джипик</th>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Пик</th>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Что не так</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analysis.days.map((day) => (
+                    <tr key={day.date}>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee", fontWeight: 600, whiteSpace: "nowrap" }}>
+                        {days[day.dayIndex].short} {day.date.slice(8, 10)}.{day.date.slice(5, 7)}
+                      </td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee" }}>{day.orders}</td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee" }}>{day.shifts}</td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee", fontWeight: 700, color: gpikColor(day.avgGpik) }}>
+                        {day.avgGpik === null ? "—" : day.avgGpik.toFixed(1)}
+                      </td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee", color: gpikColor(day.peakGpik) }}>
+                        {day.peakGpik === null ? "—" : day.peakGpik.toFixed(1)}
+                      </td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee", fontSize: "13px", color: "#53655b" }}>
+                        {day.issues.length === 0
+                          ? "Всё в порядке"
+                          : day.issues.map((issue) => (
+                              <div key={issue}>{issue}</div>
+                            ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         <section
           style={{
