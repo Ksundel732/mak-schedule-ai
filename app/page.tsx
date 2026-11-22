@@ -50,12 +50,19 @@ function getWeekStart(value: Date) {
 }
 
 // Список изменённых дней заявки: «Пятница — 18:00–22:00», «Суббота — Выходной»
-function describeRequestDays(request: any) {
+type RequestDayInfo = {
+  dayOfWeek: number;
+  name: string;
+  off: boolean;
+  text: string;
+};
+
+function describeRequestDays(request: any): RequestDayInfo[] {
   if (!Array.isArray(request?.days)) return [];
 
   return request.days
     .filter((day: any) => day.mode !== "SAME")
-    .map((day: any) => ({
+    .map((day: any): RequestDayInfo => ({
       dayOfWeek: day.dayOfWeek as number,
       name: days[day.dayOfWeek - 1]?.name || `День ${day.dayOfWeek}`,
       off: day.mode === "OFF",
