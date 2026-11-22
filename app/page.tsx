@@ -50,6 +50,42 @@ function getWeekStart(value: Date) {
 }
 
 // Список изменённых дней заявки: «Пятница — 18:00–22:00», «Суббота — Выходной»
+// Целевая неделя для заявок и графика: текущая, а с субботы — следующая
+function getTargetWeekStart(value: Date) {
+  const monday = getWeekStart(value);
+  const day = value.getDay();
+
+  if (day === 0 || day === 6) {
+    monday.setUTCDate(monday.getUTCDate() + 7);
+  }
+
+  return monday;
+}
+
+function toDateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+// «23.11–29.11» по понедельнику недели
+function formatWeekRange(monday: Date) {
+  const end = new Date(monday);
+  end.setUTCDate(end.getUTCDate() + 6);
+
+  const format = (date: Date) =>
+    `${String(date.getUTCDate()).padStart(2, "0")}.${String(
+      date.getUTCMonth() + 1
+    ).padStart(2, "0")}`;
+
+  return `${format(monday)}–${format(end)}`;
+}
+
+function mondayOfDateText(value: string) {
+  const date = new Date(String(value).slice(0, 10) + "T00:00:00.000Z");
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return date;
+}
+
 type RequestDayInfo = {
   dayOfWeek: number;
   name: string;
@@ -136,6 +172,8 @@ export default function Home() {
   const [shifts, setShifts] = useState<any[]>([]);
   const [myShifts, setMyShifts] = useState<any[]>([]);
   const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [myAvailability, setMyAvailability] = useState<any[]>([]);
+  const [mySkills, setMySkills] = useState<string[]>([]);
   const [currentEmployeeName, setCurrentEmployeeName] = useState("");
   const [employees, setEmployees] = useState<any[]>([]);
   const [login, setLogin] = useState("");
@@ -311,13 +349,27 @@ useEffect(() => {
 
   async function loadMyData(employeeId: number) {
     try {
-      const [shiftsResponse, requestsResponse] = await Promise.all([
-        fetch("/api/schedule", { cache: "no-store" }),
-        fetch("/api/requests", { cache: "no-store" }),
-      ]);
+      const [shiftsResponse, requestsResponse, availabilityResponse] =
+        await Promise.all([
+          fetch("/api/schedule", { cache: "no-store" }),
+          fetch("/api/requests", { cache: "no-store" }),
+          fetch(`/api/availability?employeeId=${employeeId}`, {
+            cache: "no-store",
+          }),
+        ]);
 
       const shiftsData = await shiftsResponse.json();
       const requestsData = await requestsResponse.json();
+      const availabilityData = await availabilityResponse.json();
+
+      if (availabilityResponse.ok) {
+        if (Array.isArray(availabilityData.availabilities)) {
+          setMyAvailability(availabilityData.availabilities);
+        }
+        if (Array.isArray(availabilityData.skills)) {
+          setMySkills(availabilityData.skills);
+        }
+      }
 
       if (shiftsResponse.ok && Array.isArray(shiftsData.shifts)) {
         const weekStart = getWeekStart(new Date());
@@ -435,7 +487,7 @@ async function submitRequest(e: React.FormEvent) {
       },
       body: JSON.stringify({
         employeeId: currentEmployeeId,
-        weekStart: new Date().toISOString().split("T")[0],
+        weekStart: toDateKey(getTargetWeekStart(new Date())),
         comment,
         changes: Object.fromEntries(
           Object.entries(changes)
@@ -702,6 +754,18 @@ async function submitRequest(e: React.FormEvent) {
                       </div>
 
                       <div className="request-comment">
+                        <div
+                          style={{
+                            fontSize: "11px",
+                            color: "#718078",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          Неделя{" "}
+                          {formatWeekRange(
+                            mondayOfDateText(request.weekStart)
+                          )}
+                        </div>
                         {request.comment
                           ? `«${request.comment}»`
                           : "Заявка на изменение"}
@@ -1052,6 +1116,50 @@ async function submitRequest(e: React.FormEvent) {
    */
 
   if (loggedIn) {
+    const targetWeek = getTargetWeekStart(new Date());
+    const targetWeekKey = toDateKey(targetWeek);
+    const nextWeek = new Date(targetWeek);
+    nextWeek.setUTCDate(nextWeek.getUTCDate() + 7);
+    const nextWeekKey = toDateKey(nextWeek);
+
+    // Последняя подтверждённая заявка на целевую неделю
+    const approvedForWeek = myRequests.find((item) => {
+      const key = String(item.weekStart).slice(0, 10);
+      return (
+        item.status === "APPROVED" &&
+        key >= targetWeekKey &&
+        key < nextWeekKey
+      );
+    });
+
+    const availabilityRows = days.map((day, index) => {
+      const dayOfWeek = index + 1;
+      const base = myAvailability.find(
+        (item) => item.dayOfWeek === dayOfWeek
+      );
+      const change = Array.isArray(approvedForWeek?.days)
+        ? approvedForWeek.days.find(
+            (item: any) =>
+              item.dayOfWeek === dayOfWeek && item.mode !== "SAME"
+          )
+        : undefined;
+
+      let text = "Выходной";
+      let changed = false;
+
+      if (change) {
+        changed = true;
+        text =
+          change.mode === "OFF"
+            ? "Выходной"
+            : `${change.startTime}–${change.endTime}`;
+      } else if (base && !base.isOff && base.startTime && base.endTime) {
+        text = `${base.startTime}–${base.endTime}`;
+      }
+
+      return { id: day.id, short: day.short, text, changed };
+    });
+
     return (
       <main className="dashboard-page">
 
@@ -1158,46 +1266,29 @@ async function submitRequest(e: React.FormEvent) {
                 </h2>
 
                 <p>
-                  Постоянное время, в которое ты
-                  можешь работать.
+                  Неделя {formatWeekRange(targetWeek)}.
+                  {approvedForWeek
+                    ? " Изменения из подтверждённой заявки отмечены ✎."
+                    : " Постоянное время, в которое ты можешь работать."}
                 </p>
 
                 <div className="availability">
 
-                  <div>
-                    <b>Пн</b>
-                    <span>
-                      Выходной
-                    </span>
-                  </div>
-
-                  <div>
-                    <b>Вт</b>
-                    <span>
-                      17:00–22:00
-                    </span>
-                  </div>
-
-                  <div>
-                    <b>Ср</b>
-                    <span>
-                      17:00–22:00
-                    </span>
-                  </div>
-
-                  <div>
-                    <b>Чт</b>
-                    <span>
-                      Выходной
-                    </span>
-                  </div>
-
-                  <div>
-                    <b>Пт</b>
-                    <span>
-                      17:00–22:00
-                    </span>
-                  </div>
+                  {availabilityRows.map((row) => (
+                    <div key={row.id}>
+                      <b>{row.short}</b>
+                      <span
+                        style={
+                          row.changed
+                            ? { color: "#087f3e", fontWeight: 700 }
+                            : undefined
+                        }
+                      >
+                        {row.text}
+                        {row.changed ? " ✎" : ""}
+                      </span>
+                    </div>
+                  ))}
 
                 </div>
 
@@ -1246,17 +1337,13 @@ async function submitRequest(e: React.FormEvent) {
 
                 <div className="skills">
 
-                  <span>
-                    Касса
-                  </span>
-
-                  <span>
-                    Выдача
-                  </span>
-
-                  <span>
-                    Прилавок
-                  </span>
+                  {mySkills.length === 0 ? (
+                    <span>Навыки пока не указаны</span>
+                  ) : (
+                    mySkills.map((skill) => (
+                      <span key={skill}>{skill}</span>
+                    ))
+                  )}
 
                 </div>
 
@@ -1323,7 +1410,7 @@ async function submitRequest(e: React.FormEvent) {
               </h1>
 
               <p>
-                Неделя 5–11 октября
+                Неделя {formatWeekRange(getTargetWeekStart(new Date()))}
               </p>
 
             </div>

@@ -77,6 +77,7 @@ export async function POST(request: Request) {
               lt: weekEnd,
             },
           },
+          orderBy: { createdAt: "desc" },
           include: { days: true },
         },
       },
@@ -105,8 +106,6 @@ export async function POST(request: Request) {
           (item) => item.dayOfWeek === dayOfWeek
         );
 
-        if (!availability || availability.isOff) continue;
-
         const approvedRequest = employee.requests.find((item) =>
           item.days.some((day) => day.dayOfWeek === dayOfWeek)
         );
@@ -117,8 +116,17 @@ export async function POST(request: Request) {
 
         if (dayChange?.mode === "OFF") continue;
 
-        let startTime = availability.startTime;
-        let endTime = availability.endTime;
+        // Без подтверждённой замены времени работаем только в дни
+        // постоянной доступности. С заменой можно выйти и в обычный выходной.
+        if (
+          dayChange?.mode !== "TIME" &&
+          (!availability || availability.isOff)
+        ) {
+          continue;
+        }
+
+        let startTime = availability?.startTime ?? null;
+        let endTime = availability?.endTime ?? null;
 
         if (dayChange?.mode === "TIME") {
           startTime = dayChange.startTime;
