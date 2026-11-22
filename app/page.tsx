@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import WeekSchedule from "./WeekSchedule";
 import { splitComment } from "../src/lib/request-meta";
 import { analyzeWeek, TARGET_GPIK } from "../src/lib/planner";
 
@@ -455,6 +456,7 @@ useEffect(() => {
     if (!managerLoggedIn || proposeId !== null) return;
 
     const timer = setInterval(async () => {
+      if (document.visibilityState !== "visible") return;
       try {
         const response = await fetch("/api/requests", { cache: "no-store" });
         const data = await response.json();
@@ -515,7 +517,7 @@ useEffect(() => {
       const [shiftsResponse, requestsResponse, availabilityResponse] =
         await Promise.all([
           fetch("/api/schedule", { cache: "no-store" }),
-          fetch("/api/requests", { cache: "no-store" }),
+          fetch(`/api/requests?employeeId=${employeeId}`, { cache: "no-store" }),
           fetch(`/api/availability?employeeId=${employeeId}`, {
             cache: "no-store",
           }),
@@ -564,7 +566,9 @@ useEffect(() => {
     loadMyData(currentEmployeeId);
 
     // Статус заявки и график обновляются сами каждые 10 секунд
-    const timer = setInterval(() => loadMyData(currentEmployeeId), 10000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") loadMyData(currentEmployeeId);
+    }, 15000);
 
     return () => clearInterval(timer);
   }, [loggedIn, currentEmployeeId]);
@@ -686,6 +690,7 @@ async function submitRequest(e: React.FormEvent) {
 }
 
   function cancelRequest() {
+    setError("");
     setShowRequest(false);
 
     setChanges(createInitialChanges());
@@ -1463,94 +1468,21 @@ async function submitRequest(e: React.FormEvent) {
           </section>
         )}
 
-        <section
-          style={{
-            marginTop: "32px",
-            background: "#ffffff",
-            borderRadius: "20px",
-            padding: "24px",
-            boxShadow: "0 4px 20px rgba(0, 0, 0, 0.06)",
+        <WeekSchedule
+          shifts={shifts}
+          onRefresh={async () => {
+            try {
+              const response = await fetch("/api/schedule", { cache: "no-store" });
+              const data = await response.json();
+              if (!response.ok || !Array.isArray(data.shifts)) {
+                throw new Error(data.error || "Сервер не вернул список смен");
+              }
+              setShifts(data.shifts);
+            } catch (error) {
+              alert(error instanceof Error ? error.message : "Не удалось загрузить расписание");
+            }
           }}
-        >
-          <div style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>
-                Созданное расписание
-              </h2>
-              <p style={{ margin: "6px 0 0", color: "#777", fontSize: "14px" }}>
-                Сохранённые смены сотрудников · Загружено смен: {shifts.length}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const response = await fetch("/api/schedule", { cache: "no-store" });
-                  const data = await response.json();
-                  if (!response.ok || !Array.isArray(data.shifts)) {
-                    throw new Error(data.error || "Сервер не вернул список смен");
-                  }
-                  setShifts(data.shifts);
-                  alert(`Расписание обновлено. Смен: ${data.shifts.length}`);
-                } catch (error) {
-                  alert(error instanceof Error ? error.message : "Не удалось загрузить расписание");
-                }
-              }}
-              style={{ background: "#176b3a", color: "white", border: "none", borderRadius: "10px", padding: "11px 16px", fontWeight: 700, cursor: "pointer" }}
-            >
-              Обновить расписание
-            </button>
-          </div>
-
-          {shifts.length === 0 ? (
-            <div
-              style={{
-                padding: "28px",
-                textAlign: "center",
-                color: "#777",
-                background: "#f8f9f8",
-                borderRadius: "14px",
-              }}
-            >
-              Смен пока нет. Нажми «Создать расписание», чтобы сформировать график.
-            </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "620px" }}>
-                <thead>
-                  <tr style={{ textAlign: "left", background: "#f4f8f5" }}>
-                    <th style={{ padding: "12px", borderBottom: "1px solid #e5e5e5" }}>Дата</th>
-                    <th style={{ padding: "12px", borderBottom: "1px solid #e5e5e5" }}>Сотрудник</th>
-                    <th style={{ padding: "12px", borderBottom: "1px solid #e5e5e5" }}>Время</th>
-                    <th style={{ padding: "12px", borderBottom: "1px solid #e5e5e5" }}>Перерыв</th>
-                    <th style={{ padding: "12px", borderBottom: "1px solid #e5e5e5" }}>Позиция</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shifts.map((shift) => {
-                    const date = new Date(shift.date);
-                    const dateLabel = Number.isNaN(date.getTime())
-                      ? String(shift.date)
-                      : date.toLocaleDateString("ru-RU", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" });
-
-                    return (
-                      <tr key={shift.id}>
-                        <td style={{ padding: "12px", borderBottom: "1px solid #eee" }}>{dateLabel}</td>
-                        <td style={{ padding: "12px", borderBottom: "1px solid #eee", fontWeight: 600 }}>{shift.employee?.name || `ID ${shift.employeeId}`}</td>
-                        <td style={{ padding: "12px", borderBottom: "1px solid #eee", whiteSpace: "nowrap" }}>{shift.startTime}–{shift.endTime}</td>
-                        <td style={{ padding: "12px", borderBottom: "1px solid #eee" }}>{shift.breakMins} мин.</td>
-                        <td style={{ padding: "12px", borderBottom: "1px solid #eee" }}>{shift.roleName}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <p style={{ marginTop: "14px", color: "#666" }}>
-                Всего смен: <strong>{shifts.length}</strong>
-              </p>
-            </div>
-          )}
-        </section>
+        />
 
       </main>
     );
@@ -1934,6 +1866,12 @@ async function submitRequest(e: React.FormEvent) {
               className="request-form"
               onSubmit={submitRequest}
             >
+
+              {error && (
+                <div className="error" style={{ marginBottom: 12 }}>
+                  {error}
+                </div>
+              )}
 
               <div className="request-info">
 

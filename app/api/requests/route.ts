@@ -15,9 +15,11 @@ const dayNumbers: Record<string, number> = {
 };
 
 // Получение заявок для менеджера
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const employeeId = Number(new URL(request.url).searchParams.get("employeeId"));
     const requests = await prisma.availabilityRequest.findMany({
+      where: Number.isInteger(employeeId) && employeeId > 0 ? { employeeId } : undefined,
       include: {
         employee: {
           select: {
