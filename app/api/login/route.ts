@@ -18,8 +18,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const employee = await prisma.employee.findUnique({
-      where: { username },
+    const employee = await prisma.employee.findFirst({
+      where: { username: { equals: username, mode: "insensitive" } },
     });
 
     if (!employee || employee.password !== password) {

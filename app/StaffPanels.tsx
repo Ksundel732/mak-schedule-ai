@@ -53,7 +53,7 @@ function SkillPicker({ catalog, value, onChange }: { catalog: Catalog; value: st
 }
 
 // ===== Окно «Сотрудники»: регистрация =====
-export function RegisterPanel() {
+export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin: string; managerPassword: string }) {
   const { staff, catalog, loadError, load } = useStaff();
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -87,6 +87,23 @@ export function RegisterPanel() {
       setMsg({ ok: false, text: err instanceof Error ? err.message : "Ошибка" });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function resetPassword(s: Staff) {
+    const newPassword = window.prompt(`Новый пароль для ${s.name} (от 4 символов):`);
+    if (!newPassword) return;
+    try {
+      const r = await fetch("/api/password", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ managerUsername: managerLogin, managerPassword, employeeId: s.id, newPassword }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Ошибка");
+      window.alert(`Пароль для ${s.name} изменён. Передайте его сотруднику.`);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Ошибка");
     }
   }
 
@@ -143,7 +160,10 @@ export function RegisterPanel() {
           {staff.map((s) => (
             <div key={s.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #eee" }}>
               <span><strong>{s.name}</strong>{s.isMinor ? " · несовершеннолетний" : ""}</span>
-              <span style={{ color: "#777" }}>{s.username}</span>
+              <span style={{ color: "#777", display: "flex", gap: 10, alignItems: "center" }}>
+                {s.username}
+                <button type="button" onClick={() => resetPassword(s)} style={{ border: "1px solid #d5e2da", background: "white", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13 }}>Сбросить пароль</button>
+              </span>
             </div>
           ))}
         </div>

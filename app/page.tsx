@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import WeekSchedule from "./WeekSchedule";
+import ChangePassword from "./ChangePassword";
 import { RegisterPanel, TrainingPanel } from "./StaffPanels";
 import { splitComment } from "../src/lib/request-meta";
 import { analyzeWeek, TARGET_GPIK } from "../src/lib/planner";
@@ -182,6 +183,7 @@ export default function Home() {
     }
   }
   const [managerRequests, setManagerRequests] = useState<any[]>([]);
+  const [showForgot, setShowForgot] = useState(false);
   const [managerTab, setManagerTab] = useState<"new" | "history">("new");
   const [managerView, setManagerView] = useState<"main" | "staff" | "training">("main");
   const [historyLimit, setHistoryLimit] = useState(10);
@@ -770,6 +772,7 @@ async function submitRequest(e: React.FormEvent) {
             </div>
           </div>
 
+          <ChangePassword username={login} currentPassword={password} onChanged={setPassword} />
           <button
             className="logout-button"
             onClick={logout}
@@ -791,7 +794,7 @@ async function submitRequest(e: React.FormEvent) {
           ))}
         </nav>
 
-        {managerView === "staff" && <RegisterPanel />}
+        {managerView === "staff" && <RegisterPanel managerLogin={login} managerPassword={password} />}
         {managerView === "training" && <TrainingPanel />}
         {managerView === "main" && (<>
 
@@ -1567,6 +1570,7 @@ async function submitRequest(e: React.FormEvent) {
 
           </div>
 
+          <ChangePassword username={login} currentPassword={password} onChanged={setPassword} />
           <button
             className="logout-button"
             onClick={logout}
@@ -2117,6 +2121,15 @@ async function submitRequest(e: React.FormEvent) {
             Войти
           </button>
 
+          <button type="button" onClick={() => setShowForgot(!showForgot)}
+            style={{ background: "none", border: "none", color: "#087f3e", fontWeight: 700, cursor: "pointer", marginTop: 12 }}>
+            Забыли пароль?
+          </button>
+          {showForgot && (
+            <div style={{ marginTop: 8, padding: 12, borderRadius: 10, background: "#f4f8f5", fontSize: 14, color: "#30493a" }}>
+              Обратитесь к менеджеру: он задаст вам новый пароль в разделе «Сотрудники». После входа его можно поменять на свой кнопкой «Сменить пароль».
+            </div>
+          )}
         </form>
 
         <div className="demo-info">
