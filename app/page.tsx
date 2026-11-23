@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import WeekSchedule from "./WeekSchedule";
+import { RegisterPanel, TrainingPanel } from "./StaffPanels";
 import { splitComment } from "../src/lib/request-meta";
 import { analyzeWeek, TARGET_GPIK } from "../src/lib/planner";
 
@@ -182,6 +183,7 @@ export default function Home() {
   }
   const [managerRequests, setManagerRequests] = useState<any[]>([]);
   const [managerTab, setManagerTab] = useState<"new" | "history">("new");
+  const [managerView, setManagerView] = useState<"main" | "staff" | "training">("main");
   const [historyLimit, setHistoryLimit] = useState(10);
   const [proposeId, setProposeId] = useState<number | null>(null);
   const [proposeChanges, setProposeChanges] = useState<
@@ -776,6 +778,22 @@ async function submitRequest(e: React.FormEvent) {
           </button>
 
         </header>
+
+        <nav style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "16px 0 0" }}>
+          {([["main", "Заявки и расписание"], ["staff", "Сотрудники"], ["training", "Обучение"]] as const).map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setManagerView(id)}
+              style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid", cursor: "pointer", fontWeight: 700,
+                borderColor: managerView === id ? "#087f3e" : "#d5e2da",
+                background: managerView === id ? "#087f3e" : "white",
+                color: managerView === id ? "white" : "#30493a" }}>
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {managerView === "staff" && <RegisterPanel />}
+        {managerView === "training" && <TrainingPanel />}
+        {managerView === "main" && (<>
 
         <section className="manager-welcome">
 
@@ -1483,6 +1501,7 @@ async function submitRequest(e: React.FormEvent) {
             }
           }}
         />
+        </>)}
 
       </main>
     );
