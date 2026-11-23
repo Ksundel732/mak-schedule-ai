@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../../src/lib/prisma";
 import {
-  planWeek,
+  planWeekBest,
   toMinutes,
   type PlannerEmployee,
 } from "../../../../src/lib/planner";
@@ -163,8 +163,14 @@ export async function POST(request: Request) {
       };
     });
 
-    const plan = planWeek(plannerEmployees);
+    const plan = planWeekBest(plannerEmployees);
     warnings.push(...plan.warnings);
+
+    if (plan.gapHours > 0) {
+      warnings.push(
+        `Остались пробелы: ${plan.gapHours} ч за неделю, когда людей меньше, чем нужно. Добавь сотрудников, расширь их доступность или обучи на нужных позициях.`
+      );
+    }
 
     const generated = plan.shifts.map((shift) => {
       const date = new Date(weekStart);

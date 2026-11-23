@@ -100,7 +100,9 @@ const DAY_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const CORE_WEIGHT = 1.2;
 const OVERSTAFF_PENALTY = 0.6;
 const FAIRNESS_PER_HOUR = 0.02;
-const MIN_USEFUL_SCORE = 1;
+const MIN_USEFUL_SCORE = 0.5;
+const OVERSTAFF_GAP_COST = 0.2;
+const EMPTY_SLOT_COST = 3;
 
 // ===== ОБЩИЕ ФУНКЦИИ =====
 
@@ -229,10 +231,31 @@ export type PlannedShift = {
   roleName: string;
 };
 
-export function planWeek(employees: PlannerEmployee[]): {
+export type PlanResult = {
   shifts: PlannedShift[];
   warnings: string[];
-} {
+  // Чем меньше, тем меньше пробелов в покрытии
+  gapScore: number;
+  // Сколько часов за неделю людей меньше, чем нужно
+  gapHours: number;
+};
+
+export function planWeek(
+  employees: PlannerEmployee[],
+  opts: { noise?: number; seed?: number } = {}
+): PlanResult {
+  let seed = (opts.seed ?? 1) >>> 0;
+  const noise = opts.noise ?? 0;
+  const rand = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let gapScore = 0;
+  let gapSlots = 0;
+
   const shifts: PlannedShift[] = [];
   const warnings: string[] = [];
 
@@ -311,6 +334,7 @@ export function planWeek(employees: PlannerEmployee[]): {
         start: number;
         end: number;
         score: number;
+        real: number;
       } | null = null;
 
       for (const [employeeId, limits] of remaining) {
@@ -339,17 +363,18 @@ export function planWeek(employees: PlannerEmployee[]): {
             const maxEnd = Math.min(limits.endSlot, start + limits.maxLen);
 
             for (let end = start + MIN_SHIFT_SLOTS; end <= maxEnd; end++) {
-              const score = prefix[end] - prefix[start] - fairness;
+              const real = prefix[end] - prefix[start] - fairness;
+              const score = noise ? real + rand() * noise : real;
 
               if (!best || score > best.score) {
-                best = { employeeId, group, start, end, score };
+                best = { employeeId, group, start, end, score, real };
               }
             }
           }
         }
       }
 
-      if (!best || best.score < MIN_USEFUL_SCORE) break;
+      if (!best || best.real < MIN_USEFUL_SCORE) break;
 
       const employee = employees.find((item) => item.id === best!.employeeId)!;
 
@@ -394,6 +419,28 @@ export function planWeek(employees: PlannerEmployee[]): {
       remaining.delete(employee.id);
     }
 
+    // Считаем пробелы за день: где людей меньше, чем нужно
+    for (let slot = 0; slot < SLOT_COUNT; slot++) {
+      let needSum = 0;
+      let assignedSum = 0;
+
+      for (const group of GROUPS) {
+        const diff = need[group.id][slot] - assigned[group.id][slot];
+        const core = group.id === "cashier" || group.id === "kitchen";
+
+        needSum += need[group.id][slot];
+        assignedSum += assigned[group.id][slot];
+
+        if (diff > 0) gapScore += diff * (core ? CORE_WEIGHT : 1);
+        else gapScore += -diff * OVERSTAFF_GAP_COST;
+      }
+
+      if (assignedSum < needSum) {
+        gapSlots += 1;
+        if (assignedSum === 0) gapScore += EMPTY_SLOT_COST;
+      }
+    }
+
     for (const employee of employees) {
       streak.set(
         employee.id,
@@ -422,7 +469,30 @@ export function planWeek(employees: PlannerEmployee[]): {
     }
   }
 
-  return { shifts, warnings };
+  return { shifts, warnings, gapScore, gapHours: gapSlots / 2 };
+}
+
+// Пробует много вариантов расписания и берёт тот, где меньше всего пробелов
+export function planWeekBest(
+  employees: PlannerEmployee[],
+  attempts = 40,
+  budgetMs = 4000
+): PlanResult {
+  const started = Date.now();
+  let best = planWeek(employees);
+
+  for (let i = 1; i < attempts; i++) {
+    if (best.gapHours === 0 || Date.now() - started > budgetMs) break;
+
+    const candidate = planWeek(employees, {
+      noise: 0.3 + (i % 8) * 0.4,
+      seed: i * 7919,
+    });
+
+    if (candidate.gapScore < best.gapScore) best = candidate;
+  }
+
+  return best;
 }
 
 // ===== АНАЛИЗ ГОТОВОГО РАСПИСАНИЯ =====
@@ -511,6 +581,7 @@ export function analyzeWeek(
     const staffHours = staffSlots / 2;
 
     let peak = 0;
+    let gapSlots = 0;
     const noOne = new Array<boolean>(SLOT_COUNT).fill(false);
     const noKitchen = new Array<boolean>(SLOT_COUNT).fill(false);
     const noCashier = new Array<boolean>(SLOT_COUNT).fill(false);
@@ -527,6 +598,10 @@ export function analyzeWeek(
         noOne[slot] = true;
       } else if (staffTotal[slot] > 0) {
         peak = Math.max(peak, orders / staffTotal[slot]);
+      }
+
+      if (staffTotal[slot] < needTotal) {
+        gapSlots += 1;
       }
 
       if (staffTotal[slot] > 0 && staffTotal[slot] < needTotal) {
@@ -573,7 +648,7 @@ export function analyzeWeek(
       avgGpik:
         staffHours > 0 ? dayOrders / (staffHours + NIGHT_STAFF_HOURS) : null,
       peakGpik: staffHours > 0 ? peak : null,
-      understaffedHours: understaffed.filter(Boolean).length / 2,
+      understaffedHours: gapSlots / 2,
       issues,
     });
   }

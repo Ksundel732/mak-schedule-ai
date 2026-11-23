@@ -1445,7 +1445,9 @@ async function submitRequest(e: React.FormEvent) {
             </h2>
             <p style={{ margin: "6px 0 18px", color: "#777", fontSize: "14px" }}>
               Джипик — заказы на одного работника в час. Цель: {TARGET_GPIK}.
-              Прогноз заказов пока примерный.
+              Прогноз заказов пока примерный. «Пробелы» — часы, когда людей
+              на смене меньше, чем нужно (всего за неделю:{" "}
+              {analysis.days.reduce((sum, day) => sum + day.understaffedHours, 0)} ч).
             </p>
 
             <div style={{ overflowX: "auto" }}>
@@ -1455,6 +1457,7 @@ async function submitRequest(e: React.FormEvent) {
                     <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>День</th>
                     <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Заказов</th>
                     <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Смен</th>
+                    <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Пробелы, ч</th>
                     <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Джипик</th>
                     <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Пик</th>
                     <th style={{ padding: "10px", borderBottom: "1px solid #e5e5e5" }}>Что не так</th>
@@ -1468,6 +1471,9 @@ async function submitRequest(e: React.FormEvent) {
                       </td>
                       <td style={{ padding: "10px", borderBottom: "1px solid #eee" }}>{day.orders}</td>
                       <td style={{ padding: "10px", borderBottom: "1px solid #eee" }}>{day.shifts}</td>
+                      <td style={{ padding: "10px", borderBottom: "1px solid #eee", fontWeight: 700, color: day.understaffedHours > 0 ? "#b3261e" : "#176b3a" }}>
+                        {day.understaffedHours}
+                      </td>
                       <td style={{ padding: "10px", borderBottom: "1px solid #eee", fontWeight: 700, color: gpikColor(day.avgGpik) }}>
                         {day.avgGpik === null ? "—" : day.avgGpik.toFixed(1)}
                       </td>
