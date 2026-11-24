@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../src/lib/prisma";
-import { GROUPS } from "../../../src/lib/planner";
+import { GROUPS, OTHER_SKILLS } from "../../../src/lib/planner";
 
 export const runtime = "nodejs";
 
@@ -27,7 +27,10 @@ export async function GET() {
         ...e,
         skills: e.skills.map((s) => s.skill.name),
       })),
-      catalog: GROUPS.map((g) => ({ label: g.label, skills: g.skills })),
+      catalog: [
+        ...GROUPS.map((g) => ({ label: g.label, skills: g.skills })),
+        { label: "Прочие позиции (в расчёт расписания не входят)", skills: OTHER_SKILLS },
+      ],
     });
   } catch (error) {
     console.error("STAFF_LOAD_ERROR:", error);

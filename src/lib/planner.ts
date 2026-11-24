@@ -50,37 +50,96 @@ export const HOURLY_WEIGHTS = [
 // людей на смене обычно нужна на этой позиции.
 export type GroupId = "cashier" | "assembly" | "kitchen" | "hall";
 
+// Все позиции ESP (Руководство по ESP, «Ввод позиций», стр. 18).
+// group — к какой группе планирования относится позиция; null — позиция
+// не входит в расчёт по Manning chart (непроизводительные и особые).
+export const POSITIONS: {
+  code: string;
+  title: string;
+  group: GroupId | null;
+}[] = [
+  { code: "C1", title: "Кассир", group: "cashier" },
+  { code: "C2", title: "Сборщик заказов", group: "assembly" },
+  { code: "EX", title: "Экспедитор сэндвичи", group: "assembly" },
+  { code: "PRV", title: "Выдача прилавок", group: "assembly" },
+  { code: "PR", title: "Презентер прилавок", group: "assembly" },
+  { code: "TS", title: "Вынос заказов за столики", group: "hall" },
+  { code: "DOS", title: "Сбор заказов доставки", group: "assembly" },
+  { code: "PP", title: "Пополнение прилавок", group: "hall" },
+  { code: "BDAP", title: "Производство напитков и десертов", group: "hall" },
+  { code: "FF", title: "Картофель", group: "kitchen" },
+  { code: "DT1", title: "Драйв: первое окно", group: "cashier" },
+  { code: "DT2", title: "Драйв: приём заказов", group: "cashier" },
+  { code: "DT", title: "Драйв: сбор и выдача", group: "assembly" },
+  { code: "PK", title: "Пополнение кухня", group: "kitchen" },
+  { code: "I", title: "Инициатор", group: "kitchen" },
+  { code: "DFR", title: "Доготовщик: фритюр", group: "kitchen" },
+  { code: "DGR", title: "Доготовщик: гриль", group: "kitchen" },
+  { code: "Z", title: "Заправщик", group: "kitchen" },
+  { code: "S", title: "Сборщик", group: "kitchen" },
+  { code: "TRN", title: "Обучение: работник и инструктор", group: null },
+  { code: "LL", title: "Зал", group: "hall" },
+  { code: "OUT", title: "Уборка улицы", group: "hall" },
+  { code: "WC", title: "Уборка туалетов", group: "hall" },
+  { code: "DEL", title: "Доставка", group: null },
+  { code: "MR", title: "Кассовая комната", group: "cashier" },
+  { code: "REG", title: "Регламент", group: null },
+  { code: "NGHT", title: "Ночная смена", group: null },
+  { code: "SWNG", title: "Свинг менеджеров", group: null },
+];
+
+export const positionName = (p: { code: string; title: string }) =>
+  `${p.code} ${p.title}`;
+
+const skillsOfGroup = (group: GroupId) =>
+  POSITIONS.filter((p) => p.group === group).map(positionName);
+
+// Позиции вне расчёта (показываются в окне «Обучение», но расписание
+// на них не строится)
+export const OTHER_SKILLS = POSITIONS.filter((p) => p.group === null).map(
+  positionName
+);
+
 export const GROUPS: {
   id: GroupId;
   label: string;
   skills: string[];
+  // старые названия навыков, которые уже записаны у сотрудников в базе
+  aliases: string[];
   share: number;
 }[] = [
   {
     id: "cashier",
-    label: "Касса",
-    skills: ["Касса", "Работник кассовой комнаты", "Закрытие доставок"],
+    label: "Касса и драйв (приём)",
+    skills: skillsOfGroup("cashier"),
+    aliases: ["Касса", "Работник кассовой комнаты", "Закрытие доставок"],
     share: 0.25,
   },
   {
     id: "assembly",
-    label: "Выдача",
-    skills: ["Выдача", "Прилавок"],
+    label: "Выдача и сборка",
+    skills: skillsOfGroup("assembly"),
+    aliases: ["Выдача", "Прилавок"],
     share: 0.2,
   },
   {
     id: "kitchen",
     label: "Кухня",
-    skills: ["Кухня", "Фритюр", "Гриль", "Линия"],
+    skills: skillsOfGroup("kitchen"),
+    aliases: ["Кухня", "Фритюр", "Гриль", "Линия"],
     share: 0.4,
   },
   {
     id: "hall",
-    label: "Зал",
-    skills: ["Зал", "Напитки", "Пополнение"],
+    label: "Зал, напитки, пополнение",
+    skills: skillsOfGroup("hall"),
+    aliases: ["Зал", "Напитки", "Пополнение"],
     share: 0.15,
   },
 ];
+
+const groupHasSkill = (group: (typeof GROUPS)[number], skill: string) =>
+  group.skills.includes(skill) || group.aliases.includes(skill);
 
 // ===== ПРАВИЛА СМЕН =====
 
@@ -129,7 +188,7 @@ function slotStart(slot: number) {
 }
 
 export function groupOfSkill(skill: string): GroupId | null {
-  const group = GROUPS.find((item) => item.skills.includes(skill));
+  const group = GROUPS.find((item) => groupHasSkill(item, skill));
   return group ? group.id : null;
 }
 
@@ -385,7 +444,7 @@ export function planWeek(
       // Конкретная позиция внутри группы: берём ту, что реже использовалась
       const groupDef = GROUPS.find((item) => item.id === best!.group)!;
       const ownSkills = employee.skills.filter((skill) =>
-        groupDef.skills.includes(skill)
+        groupHasSkill(groupDef, skill)
       );
       ownSkills.sort(
         (a, b) =>
