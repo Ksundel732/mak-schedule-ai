@@ -113,3 +113,10 @@ model Absence {
   @@index([employeeId])
   @@index([startDate, endDate])
 }
+
+// Прогноз заказов (GC) на день недели: 1 — понедельник … 7 — воскресенье
+model Forecast {
+  dayOfWeek Int      @id
+  orders    Int
+  updatedAt DateTime @updatedAt
+}

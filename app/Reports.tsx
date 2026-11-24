@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS, ordersInHour, DAILY_ORDERS } from "../src/lib/planner";
+import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS, ordersInHour, DAILY_ORDERS, setDailyOrders } from "../src/lib/planner";
 
 type Shift = { breakMins?: number; id: number; employeeId: number; date: string; startTime: string; endTime: string; roleName: string; employee?: { name: string } };
 type Staff = {
@@ -37,6 +37,11 @@ export default function Reports() {
   const [day, setDay] = useState("");
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [error, setError] = useState("");
+  const [forecastVersion, setForecastVersion] = useState(0);
+
+  useEffect(() => {
+    fetch("/api/forecast", { cache: "no-store" }).then((r) => r.json()).then((d) => { if (d.orders) { setDailyOrders(d.orders); setForecastVersion((v) => v + 1); } }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     Promise.all([fetch("/api/schedule", { cache: "no-store" }).then((r) => r.json()), fetch("/api/staff", { cache: "no-store" }).then((r) => r.json())])
@@ -83,7 +88,7 @@ export default function Reports() {
       const have = dayShifts.filter((s) => toMin(s.startTime) <= t && toMin(s.endTime) >= t + 30).length;
       return { want, have };
     });
-  }, [dayShifts, day]);
+  }, [dayShifts, day, forecastVersion]);
 
   const problem = (s: Shift) => {
     const p = staff.find((x) => x.id === s.employeeId);
@@ -106,7 +111,7 @@ export default function Reports() {
       const orders = ordersInHour(wd, h);
       return { hour: 7 + h, orders, want, have, diff: have - want, gcph: have > 0 ? orders / have : 0 };
     });
-  }, [dayShifts, day]);
+  }, [dayShifts, day, forecastVersion]);
 
   // Статистика недели, в которую входит выбранный день
   const weekStats = useMemo(() => {
@@ -123,7 +128,7 @@ export default function Reports() {
       const gaps = coverageFor(list, i + 1).filter((c) => c.have < c.want).length / 2;
       return { key, shiftsCount: list.length, hours, breaks, orders, gaps, gcph: hours > 0 ? orders / hours : 0 };
     });
-  }, [shifts, day]);
+  }, [shifts, day, forecastVersion]);
 
   const trained = (p: Staff, code: string) => {
     const pos = POSITIONS.find((x) => x.code === code)!;

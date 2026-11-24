@@ -6,9 +6,10 @@ import WeekSchedule from "./WeekSchedule";
 import ChangePassword from "./ChangePassword";
 import Reports from "./Reports";
 import Absences from "./Absences";
+import Forecast from "./Forecast";
 import { RegisterPanel, TrainingPanel } from "./StaffPanels";
 import { splitComment } from "../src/lib/request-meta";
-import { analyzeWeek, TARGET_GPIK } from "../src/lib/planner";
+import { analyzeWeek, TARGET_GPIK, setDailyOrders } from "../src/lib/planner";
 
 type DayChange = {
   mode: "same" | "time" | "off";
@@ -186,8 +187,22 @@ export default function Home() {
   }
   const [managerRequests, setManagerRequests] = useState<any[]>([]);
   const [showForgot, setShowForgot] = useState(false);
+  const [, setForecastTick] = useState(0);
+
+  // Прогноз заказов, введённый менеджером, нужен и для анализа на экране
+  useEffect(() => {
+    fetch("/api/forecast", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.orders) {
+          setDailyOrders(d.orders);
+          setForecastTick((v) => v + 1);
+        }
+      })
+      .catch(() => {});
+  }, []);
   const [managerTab, setManagerTab] = useState<"new" | "history">("new");
-  const [managerView, setManagerView] = useState<"main" | "staff" | "training" | "reports" | "absences">("main");
+  const [managerView, setManagerView] = useState<"main" | "staff" | "training" | "reports" | "absences" | "forecast">("main");
   const [historyLimit, setHistoryLimit] = useState(10);
   const [proposeId, setProposeId] = useState<number | null>(null);
   const [proposeChanges, setProposeChanges] = useState<
@@ -785,7 +800,7 @@ async function submitRequest(e: React.FormEvent) {
         </header>
 
         <nav style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "16px 0 0" }}>
-          {([["main", "Заявки и расписание"], ["staff", "Сотрудники"], ["training", "Обучение"], ["absences", "Отсутствия"], ["reports", "Отчёты"]] as const).map(([id, label]) => (
+          {([["main", "Заявки и расписание"], ["staff", "Сотрудники"], ["training", "Обучение"], ["forecast", "Прогноз"], ["absences", "Отсутствия"], ["reports", "Отчёты"]] as const).map(([id, label]) => (
             <button key={id} type="button" onClick={() => setManagerView(id)}
               style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid", cursor: "pointer", fontWeight: 700,
                 borderColor: managerView === id ? "#087f3e" : "#d5e2da",
@@ -798,6 +813,7 @@ async function submitRequest(e: React.FormEvent) {
 
         {managerView === "staff" && <RegisterPanel managerLogin={login} managerPassword={password} />}
         {managerView === "training" && <TrainingPanel />}
+        {managerView === "forecast" && <Forecast />}
         {managerView === "absences" && <Absences />}
         {managerView === "reports" && <Reports />}
         {managerView === "main" && (<>

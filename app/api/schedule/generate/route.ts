@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "../../../../src/lib/prisma";
 import {
   planWeekBest,
+  setDailyOrders,
   toMinutes,
   type PlannerEmployee,
 } from "../../../../src/lib/planner";
@@ -162,6 +163,14 @@ export async function POST(request: Request) {
         prevStreak,
       };
     });
+
+    // Прогноз заказов, который ввёл менеджер (если нет — стандартный)
+    try {
+      const rows = await prisma.forecast.findMany();
+      setDailyOrders(Object.fromEntries(rows.map((r) => [r.dayOfWeek, r.orders])));
+    } catch (error) {
+      console.error("FORECAST_LOAD_ERROR:", error);
+    }
 
     // Отсутствия (отпуск, больничный) переопределяют доступность
     try {

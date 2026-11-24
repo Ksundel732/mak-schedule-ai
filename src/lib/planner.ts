@@ -42,6 +42,14 @@ export const DAILY_ORDERS: Record<number, number> = {
 
 // Как заказы распределяются по часам с 07:00 до 23:00 (17 значений).
 // Это число заказов (GC) по часам с реального дашборда.
+// Подставляет прогноз заказов, введённый менеджером (1 — Пн … 7 — Вс)
+export function setDailyOrders(orders: Record<number, number>) {
+  for (let day = 1; day <= 7; day++) {
+    const value = Number(orders[day]);
+    if (Number.isFinite(value) && value >= 0) DAILY_ORDERS[day] = Math.round(value);
+  }
+}
+
 export const HOURLY_WEIGHTS = [
   10, 28, 38, 39, 57, 93, 130, 138, 120, 129, 101, 113, 83, 59, 61, 52, 19,
 ];
