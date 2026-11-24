@@ -59,6 +59,9 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isMinor, setIsMinor] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [birthDate, setBirthDate] = useState("");
+  const [hireDate, setHireDate] = useState("");
   const [skills, setSkills] = useState<string[]>([]);
   const [days, setDays] = useState(DAYS.map(() => ({ isOff: false, startTime: "09:00", endTime: "22:00" })));
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -75,13 +78,13 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
       const r = await fetch("/api/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, username, password, isMinor, skills,
+        body: JSON.stringify({ name, username, password, isMinor, skills, phone, birthDate, hireDate,
           availability: days.map((d, i) => ({ dayOfWeek: i + 1, ...d })) }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "Ошибка");
       setMsg({ ok: true, text: `Сотрудник ${d.employee.name} зарегистрирован` });
-      setName(""); setUsername(""); setPassword(""); setIsMinor(false); setSkills([]);
+      setName(""); setUsername(""); setPassword(""); setIsMinor(false); setSkills([]); setPhone(""); setBirthDate(""); setHireDate("");
       load();
     } catch (err) {
       setMsg({ ok: false, text: err instanceof Error ? err.message : "Ошибка" });
@@ -116,6 +119,11 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
             <input style={input} placeholder="Имя и фамилия" value={name} onChange={(e) => setName(e.target.value)} />
             <input style={input} placeholder="Логин" value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" />
             <input style={input} placeholder="Пароль (от 4 символов)" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12 }}>
+            <input style={input} placeholder="Телефон" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <label style={{ fontSize: 13, color: "#777" }}>Дата рождения<input type="date" style={input} value={birthDate} onChange={(e) => setBirthDate(e.target.value)} /></label>
+            <label style={{ fontSize: 13, color: "#777" }}>Дата приёма на работу<input type="date" style={input} value={hireDate} onChange={(e) => setHireDate(e.target.value)} /></label>
           </div>
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input type="checkbox" checked={isMinor} onChange={(e) => setIsMinor(e.target.checked)} />

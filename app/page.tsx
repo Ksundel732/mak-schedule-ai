@@ -189,6 +189,15 @@ export default function Home() {
   const [showForgot, setShowForgot] = useState(false);
   const [, setForecastTick] = useState(0);
 
+  // После обновления страницы входим заново автоматически (пока вкладка открыта)
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("mak-session") || "null");
+      if (saved?.u && saved?.p) signIn(saved.u, saved.p);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Прогноз заказов, введённый менеджером, нужен и для анализа на экране
   useEffect(() => {
     fetch("/api/forecast", { cache: "no-store" })
@@ -596,7 +605,10 @@ useEffect(() => {
 
   async function handleLogin(e: React.FormEvent) {
   e.preventDefault();
+  await signIn(login, password);
+}
 
+async function signIn(usernameValue: string, passwordValue: string) {
   setError("");
 
   try {
@@ -606,17 +618,24 @@ useEffect(() => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        username: login,
-        password: password,
+        username: usernameValue,
+        password: passwordValue,
       }),
     });
 
     const data = await response.json();
 
     if (!response.ok) {
+      sessionStorage.removeItem("mak-session");
       setError(data.error || "Неверный логин или пароль");
       return;
     }
+
+    setLogin(usernameValue);
+    setPassword(passwordValue);
+    try {
+      sessionStorage.setItem("mak-session", JSON.stringify({ u: usernameValue, p: passwordValue }));
+    } catch {}
 
     setCurrentEmployeeName(data.employee.name || "");
 
@@ -634,6 +653,7 @@ useEffect(() => {
 }
 
   function logout() {
+    try { sessionStorage.removeItem("mak-session"); } catch {}
     setLoggedIn(false);
     setManagerLoggedIn(false);
     setShowRequest(false);
@@ -789,7 +809,7 @@ async function submitRequest(e: React.FormEvent) {
             </div>
           </div>
 
-          <ChangePassword username={login} currentPassword={password} onChanged={setPassword} />
+          <ChangePassword username={login} currentPassword={password} onChanged={(np) => { setPassword(np); try { sessionStorage.setItem("mak-session", JSON.stringify({ u: login, p: np })); } catch {} }} />
           <button
             className="logout-button"
             onClick={logout}
@@ -1596,7 +1616,7 @@ async function submitRequest(e: React.FormEvent) {
 
           </div>
 
-          <ChangePassword username={login} currentPassword={password} onChanged={setPassword} />
+          <ChangePassword username={login} currentPassword={password} onChanged={(np) => { setPassword(np); try { sessionStorage.setItem("mak-session", JSON.stringify({ u: login, p: np })); } catch {} }} />
           <button
             className="logout-button"
             onClick={logout}

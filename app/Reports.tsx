@@ -33,11 +33,20 @@ const fmtDate = (key: string) => `${key.slice(8, 10)}.${key.slice(5, 7)}.${key.s
 export default function Reports() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [tab, setTab] = useState<"stations" | "summary" | "stats" | "sub" | "breaks" | "training">("stations");
+  const [tab, setTab] = useState<"people" | "stations" | "summary" | "stats" | "sub" | "breaks" | "training">("stations");
   const [day, setDay] = useState("");
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [error, setError] = useState("");
   const [forecastVersion, setForecastVersion] = useState(0);
+  const [profiles, setProfiles] = useState<Record<number, { phone: string | null; birthDate: string | null; hireDate: string | null }>>({});
+
+  useEffect(() => {
+    fetch("/api/profile", { cache: "no-store" }).then((r) => r.json()).then((d) => {
+      const map: typeof profiles = {};
+      (d.profiles ?? []).forEach((p: { employeeId: number; phone: string | null; birthDate: string | null; hireDate: string | null }) => { map[p.employeeId] = p; });
+      setProfiles(map);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch("/api/forecast", { cache: "no-store" }).then((r) => r.json()).then((d) => { if (d.orders) { setDailyOrders(d.orders); setForecastVersion((v) => v + 1); } }).catch(() => {});
@@ -146,6 +155,7 @@ export default function Reports() {
     <section style={card}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: "0 12px 0 0", fontSize: 22 }}>Отчёты</h2>
+        <button type="button" style={tabBtn(tab === "people")} onClick={() => setTab("people")}>Сотрудники</button>
         <button type="button" style={tabBtn(tab === "stations")} onClick={() => setTab("stations")}>По станциям</button>
         <button type="button" style={tabBtn(tab === "summary")} onClick={() => setTab("summary")}>Сводка дня</button>
         <button type="button" style={tabBtn(tab === "stats")} onClick={() => setTab("stats")}>Статистика</button>
@@ -154,6 +164,54 @@ export default function Reports() {
         <button type="button" style={tabBtn(tab === "training")} onClick={() => setTab("training")}>Обучение</button>
       </div>
       {error && <div style={{ color: "#b3261e" }}>{error}</div>}
+
+      {tab === "people" && (() => {
+        const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+        const seniority = (iso: string | null | undefined) => {
+          if (!iso) return "—";
+          const from = new Date(iso);
+          const now = new Date();
+          let months = (now.getFullYear() - from.getUTCFullYear()) * 12 + now.getMonth() - from.getUTCMonth();
+          if (now.getDate() < from.getUTCDate()) months -= 1;
+          if (months < 0) return "—";
+          return months >= 12 ? `${Math.floor(months / 12)} г. ${months % 12} мес.` : `${months} мес.`;
+        };
+        const ddmm = (iso: string | null | undefined) => (iso ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "—");
+        const birthdays = staff
+          .filter((p) => profiles[p.id]?.birthDate)
+          .sort((a, b) => (profiles[a.id]!.birthDate as string).slice(5).localeCompare((profiles[b.id]!.birthDate as string).slice(5)));
+        return (
+          <>
+            <p style={{ color: "#777", fontSize: 14 }}>Список сотрудников с телефонами и стажем, дни рождения по месяцам. Данные вносятся при регистрации.</p>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                <thead><tr>{["Сотрудник", "Телефон", "Дата рождения", "Принят", "Стаж"].map((h) => <th key={h} style={head}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {staff.map((p) => (
+                    <tr key={p.id}>
+                      <td style={cell}>{p.name}</td>
+                      <td style={cell}>{profiles[p.id]?.phone || "—"}</td>
+                      <td style={cell}>{ddmm(profiles[p.id]?.birthDate)}</td>
+                      <td style={cell}>{ddmm(profiles[p.id]?.hireDate)}</td>
+                      <td style={cell}>{seniority(profiles[p.id]?.hireDate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3 style={{ margin: "20px 0 8px" }}>Дни рождения</h3>
+            {birthdays.length === 0 && <div style={{ color: "#777" }}>Дат рождения пока нет.</div>}
+            {MONTHS.map((m, i) => {
+              const list = birthdays.filter((p) => Number((profiles[p.id]!.birthDate as string).slice(5, 7)) === i + 1);
+              return list.length ? (
+                <div key={m} style={{ marginBottom: 8, fontSize: 14 }}>
+                  <strong>{m}:</strong> {list.map((p) => `${p.name} (${(profiles[p.id]!.birthDate as string).slice(8, 10)}.${(profiles[p.id]!.birthDate as string).slice(5, 7)})`).join(", ")}
+                </div>
+              ) : null;
+            })}
+          </>
+        );
+      })()}
 
       {tab === "stations" && (
         <>

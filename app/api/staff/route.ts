@@ -94,6 +94,20 @@ export async function POST(request: Request) {
       select: { id: true, name: true },
     });
 
+    if (body.phone || body.birthDate || body.hireDate) {
+      try {
+        await prisma.$executeRawUnsafe(
+          `CREATE TABLE IF NOT EXISTS "EmployeeProfile" ("employeeId" INTEGER NOT NULL, "phone" TEXT, "birthDate" TIMESTAMP(3), "hireDate" TIMESTAMP(3), "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "EmployeeProfile_pkey" PRIMARY KEY ("employeeId"))`
+        );
+        const day = (v: unknown) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00.000Z`) : null);
+        await prisma.employeeProfile.create({
+          data: { employeeId: employee.id, phone: body.phone ? String(body.phone).slice(0, 40) : null, birthDate: day(body.birthDate), hireDate: day(body.hireDate) },
+        });
+      } catch (profileError) {
+        console.error("PROFILE_CREATE_ERROR:", profileError);
+      }
+    }
+
     return NextResponse.json({ success: true, employee });
   } catch (error) {
     console.error("STAFF_CREATE_ERROR:", error);

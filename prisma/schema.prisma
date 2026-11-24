@@ -120,3 +120,12 @@ model Forecast {
   orders    Int
   updatedAt DateTime @updatedAt
 }
+
+// Данные сотрудника: телефон, дата рождения, дата приёма на работу
+model EmployeeProfile {
+  employeeId Int       @id
+  phone      String?
+  birthDate  DateTime?
+  hireDate   DateTime?
+  updatedAt  DateTime  @updatedAt
+}
