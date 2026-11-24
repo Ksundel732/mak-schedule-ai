@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "Forecast" (
+CREATE TABLE IF NOT EXISTS "Forecast" (
     "dayOfWeek" INTEGER NOT NULL,
     "orders" INTEGER NOT NULL,
     "updatedAt" TIMESTAMP(3) NOT NULL,

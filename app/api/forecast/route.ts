@@ -4,10 +4,18 @@ import { DAILY_ORDERS } from "../../../src/lib/planner";
 
 export const runtime = "nodejs";
 
+// Если миграция ещё не применилась, создаём таблицу прогноза сами
+async function ensureTable() {
+  await prisma.$executeRawUnsafe(
+    `CREATE TABLE IF NOT EXISTS "Forecast" ("dayOfWeek" INTEGER NOT NULL, "orders" INTEGER NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "Forecast_pkey" PRIMARY KEY ("dayOfWeek"))`
+  );
+}
+
 // Прогноз заказов по дням недели (1 — Пн … 7 — Вс): сохранённый или стандартный
 export async function GET() {
   const orders: Record<number, number> = { ...DAILY_ORDERS };
   try {
+    await ensureTable();
     const rows = await prisma.forecast.findMany();
     rows.forEach((r) => { orders[r.dayOfWeek] = r.orders; });
   } catch (error) {
@@ -29,6 +37,7 @@ export async function PUT(request: Request) {
       entries.push([day, value]);
     }
 
+    await ensureTable();
     await prisma.$transaction(
       entries.map(([dayOfWeek, orders]) =>
         prisma.forecast.upsert({ where: { dayOfWeek }, update: { orders }, create: { dayOfWeek, orders } })
