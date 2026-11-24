@@ -18,6 +18,7 @@ export async function GET() {
         isMinor: true,
         createdAt: true,
         skills: { select: { skill: { select: { name: true } } } },
+        availabilities: { select: { dayOfWeek: true, isOff: true, startTime: true, endTime: true } },
       },
       orderBy: { name: "asc" },
     });

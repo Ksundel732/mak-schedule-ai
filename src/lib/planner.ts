@@ -177,11 +177,25 @@ export function toTime(minutes: number) {
   return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
 }
 
-export function getBreakMinutes(durationMinutes: number) {
-  if (durationMinutes < 5.5 * 60) return 30;
-  if (durationMinutes < 7.5 * 60) return 45;
-  return 60;
+// Перерывы по таблице из руководства ESP (стр. 36):
+// взрослые: от 4,5 ч — 30 мин, от 5,5 ч — ещё 15, от 7,5 ч — ещё 15;
+// несовершеннолетние: от 2,5 ч — 30 мин, от 5,5 ч — ещё 15.
+export function getBreakParts(durationMinutes: number, isMinor = false): number[] {
+  const hours = durationMinutes / 60;
+  const parts: number[] = [];
+
+  if (isMinor ? hours >= 2.5 : hours >= 4.5) parts.push(30);
+  if (hours >= 5.5) parts.push(15);
+  if (!isMinor && hours >= 7.5) parts.push(15);
+
+  return parts;
 }
+
+export function getBreakMinutes(durationMinutes: number, isMinor = false) {
+  return getBreakParts(durationMinutes, isMinor).reduce((a, b) => a + b, 0);
+}
+
+export const MINOR_LIMITS = { maxHours: MINOR_MAX_SLOTS / 2, endMin: MINOR_END_MIN };
 
 function slotStart(slot: number) {
   return OPEN_MIN + slot * SLOT_MIN;
@@ -465,7 +479,7 @@ export function planWeek(
         dayIndex,
         startTime: toTime(startMin),
         endTime: toTime(endMin),
-        breakMins: getBreakMinutes(endMin - startMin),
+        breakMins: getBreakMinutes(endMin - startMin, employee.isMinor),
         roleName,
       });
 
