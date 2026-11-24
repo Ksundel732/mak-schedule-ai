@@ -40,7 +40,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, absence });
   } catch (error) {
     console.error("ABSENCE_CREATE_ERROR:", error);
-    return NextResponse.json({ error: "Не удалось сохранить отсутствие" }, { status: 500 });
+    const detail = error instanceof Error ? error.message.split("\n").filter(Boolean).slice(-3).join(" ").slice(0, 300) : "";
+    return NextResponse.json({ error: `Не удалось сохранить отсутствие. ${detail}`.trim() }, { status: 500 });
   }
 }
 
