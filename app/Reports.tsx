@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS } from "../src/lib/planner";
+import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS, ordersInHour, DAILY_ORDERS } from "../src/lib/planner";
 
-type Shift = { id: number; employeeId: number; date: string; startTime: string; endTime: string; roleName: string; employee?: { name: string } };
+type Shift = { breakMins?: number; id: number; employeeId: number; date: string; startTime: string; endTime: string; roleName: string; employee?: { name: string } };
 type Staff = {
   id: number; name: string; isMinor: boolean; skills: string[];
   availabilities: { dayOfWeek: number; isOff: boolean; startTime: string | null; endTime: string | null }[];
@@ -16,12 +16,24 @@ const tabBtn = (on: boolean): React.CSSProperties => ({ padding: "8px 14px", bor
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const dayKey = (s: Shift) => String(s.date).slice(0, 10);
 const weekdayOf = (key: string) => { const d = new Date(`${key}T00:00:00Z`).getUTCDay(); return d === 0 ? 7 : d; };
+const hoursOfShift = (s: Shift) => (toMin(s.endTime) - toMin(s.startTime)) / 60;
+const coverageFor = (list: Shift[], wd: number) => {
+  const need = buildNeed(wd);
+  return Array.from({ length: SLOT_COUNT }, (_, slot) => {
+    const t = OPEN_MIN + slot * 30;
+    return {
+      want: GROUPS.reduce((sum, g) => sum + need[g.id][slot], 0),
+      have: list.filter((x) => toMin(x.startTime) <= t && toMin(x.endTime) >= t + 30).length,
+    };
+  });
+};
+const r1 = (n: number) => Math.round(n * 10) / 10;
 const fmtDate = (key: string) => `${key.slice(8, 10)}.${key.slice(5, 7)}.${key.slice(0, 4)}`;
 
 export default function Reports() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [tab, setTab] = useState<"stations" | "sub" | "breaks" | "training">("stations");
+  const [tab, setTab] = useState<"stations" | "summary" | "stats" | "sub" | "breaks" | "training">("stations");
   const [day, setDay] = useState("");
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [error, setError] = useState("");
@@ -82,6 +94,37 @@ export default function Reports() {
     return "";
   };
 
+  // Сводка дня: по часам прогноз заказов, нужно / запланировано людей, GCPH
+  const hourly = useMemo(() => {
+    const wd = weekdayOf(day || "1970-01-05");
+    const cov = coverageFor(dayShifts, wd);
+    return Array.from({ length: SLOT_COUNT / 2 }, (_, h) => {
+      const a = cov[h * 2];
+      const b = cov[h * 2 + 1];
+      const want = Math.max(a.want, b.want);
+      const have = (a.have + b.have) / 2;
+      const orders = ordersInHour(wd, h);
+      return { hour: 7 + h, orders, want, have, diff: have - want, gcph: have > 0 ? orders / have : 0 };
+    });
+  }, [dayShifts, day]);
+
+  // Статистика недели, в которую входит выбранный день
+  const weekStats = useMemo(() => {
+    if (!day) return [];
+    const wd = weekdayOf(day);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(`${day}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - (wd - 1) + i);
+      const key = d.toISOString().slice(0, 10);
+      const list = shifts.filter((x) => dayKey(x) === key);
+      const hours = list.reduce((sum, x) => sum + hoursOfShift(x), 0);
+      const breaks = list.reduce((sum, x) => sum + (x.breakMins ?? 0), 0) / 60;
+      const orders = DAILY_ORDERS[i + 1] ?? 0;
+      const gaps = coverageFor(list, i + 1).filter((c) => c.have < c.want).length / 2;
+      return { key, shiftsCount: list.length, hours, breaks, orders, gaps, gcph: hours > 0 ? orders / hours : 0 };
+    });
+  }, [shifts, day]);
+
   const trained = (p: Staff, code: string) => {
     const pos = POSITIONS.find((x) => x.code === code)!;
     return p.skills.includes(`${pos.code} ${pos.title}`);
@@ -99,6 +142,8 @@ export default function Reports() {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: "0 12px 0 0", fontSize: 22 }}>Отчёты</h2>
         <button type="button" style={tabBtn(tab === "stations")} onClick={() => setTab("stations")}>По станциям</button>
+        <button type="button" style={tabBtn(tab === "summary")} onClick={() => setTab("summary")}>Сводка дня</button>
+        <button type="button" style={tabBtn(tab === "stats")} onClick={() => setTab("stats")}>Статистика</button>
         <button type="button" style={tabBtn(tab === "sub")} onClick={() => setTab("sub")}>Готовы выйти на замену</button>
         <button type="button" style={tabBtn(tab === "breaks")} onClick={() => setTab("breaks")}>Перерывы</button>
         <button type="button" style={tabBtn(tab === "training")} onClick={() => setTab("training")}>Обучение</button>
@@ -155,6 +200,79 @@ export default function Reports() {
               </div>
             );
           })()}
+        </>
+      )}
+
+      {tab === "summary" && (
+        <>
+          <p style={{ color: "#777", fontSize: 14 }}>
+            Ежедневная сводка по часам: прогноз заказов, сколько людей нужно и сколько запланировано, и заказы на человека в час (GCPH). {daySelect}
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+              <thead><tr>{["Час", "Прогноз заказов", "Нужно человек", "Запланировано", "+/-", "GCPH"].map((h) => <th key={h} style={head}>{h}</th>)}</tr></thead>
+              <tbody>
+                {hourly.map((r) => (
+                  <tr key={r.hour}>
+                    <td style={cell}>{String(r.hour).padStart(2, "0")}:00</td>
+                    <td style={cell}>{r1(r.orders)}</td>
+                    <td style={cell}>{r.want}</td>
+                    <td style={cell}>{r1(r.have)}</td>
+                    <td style={{ ...cell, fontWeight: 700, color: r.diff < 0 ? "#b3261e" : "#176b3a" }}>{r.diff > 0 ? "+" : ""}{r1(r.diff)}</td>
+                    <td style={cell}>{r.have > 0 ? r1(r.gcph) : "—"}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td style={{ ...cell, fontWeight: 700 }}>Итого</td>
+                  <td style={{ ...cell, fontWeight: 700 }}>{r1(hourly.reduce((a, r) => a + r.orders, 0))}</td>
+                  <td style={{ ...cell, fontWeight: 700 }}>{r1(hourly.reduce((a, r) => a + r.want, 0))} ч</td>
+                  <td style={{ ...cell, fontWeight: 700 }}>{r1(hourly.reduce((a, r) => a + r.have, 0))} ч</td>
+                  <td style={{ ...cell, fontWeight: 700 }}>{r1(hourly.reduce((a, r) => a + r.diff, 0))}</td>
+                  <td style={cell}></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {tab === "stats" && (
+        <>
+          <p style={{ color: "#777", fontSize: 14 }}>
+            Статистика недели, в которую входит выбранный день: заказы, часы, перерывы, GCPH и часы, когда людей не хватает. {daySelect}
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+              <thead><tr>{["День", "Прогноз заказов", "Смен", "Часов", "Перерывы, ч", "GCPH", "Пробелы, ч"].map((h) => <th key={h} style={head}>{h}</th>)}</tr></thead>
+              <tbody>
+                {weekStats.map((r, i) => (
+                  <tr key={r.key}>
+                    <td style={cell}>{["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][i]} {r.key.slice(8, 10)}.{r.key.slice(5, 7)}</td>
+                    <td style={cell}>{r.orders}</td>
+                    <td style={cell}>{r.shiftsCount}</td>
+                    <td style={cell}>{r1(r.hours)}</td>
+                    <td style={cell}>{r1(r.breaks)}</td>
+                    <td style={cell}>{r.hours > 0 ? r1(r.gcph) : "—"}</td>
+                    <td style={{ ...cell, fontWeight: 700, color: r.gaps > 0 ? "#b3261e" : "#176b3a" }}>{r.gaps}</td>
+                  </tr>
+                ))}
+                {(() => {
+                  const t = weekStats.reduce((a, r) => ({ orders: a.orders + r.orders, shiftsCount: a.shiftsCount + r.shiftsCount, hours: a.hours + r.hours, breaks: a.breaks + r.breaks, gaps: a.gaps + r.gaps }), { orders: 0, shiftsCount: 0, hours: 0, breaks: 0, gaps: 0 });
+                  return (
+                    <tr>
+                      <td style={{ ...cell, fontWeight: 700 }}>Неделя</td>
+                      <td style={{ ...cell, fontWeight: 700 }}>{t.orders}</td>
+                      <td style={{ ...cell, fontWeight: 700 }}>{t.shiftsCount}</td>
+                      <td style={{ ...cell, fontWeight: 700 }}>{r1(t.hours)}</td>
+                      <td style={{ ...cell, fontWeight: 700 }}>{r1(t.breaks)}</td>
+                      <td style={{ ...cell, fontWeight: 700 }}>{t.hours > 0 ? r1(t.orders / t.hours) : "—"}</td>
+                      <td style={{ ...cell, fontWeight: 700 }}>{t.gaps}</td>
+                    </tr>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
