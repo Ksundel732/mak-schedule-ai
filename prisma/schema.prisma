@@ -20,6 +20,7 @@ model Employee {
   skills         EmployeeSkill[]
   requests       AvailabilityRequest[]
   shifts         Shift[]
+  absences       Absence[]
 }
 
 model PermanentAvailability {
@@ -95,4 +96,20 @@ model Shift {
 
   @@index([date])
   @@index([employeeId, date])
+}
+
+// Отсутствия сотрудников: отпуск, больничный и т.д. (переопределяют доступность)
+model Absence {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  type       String   @default("VACATION")
+  startDate  DateTime
+  endDate    DateTime
+  note       String?
+  createdAt  DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([startDate, endDate])
 }

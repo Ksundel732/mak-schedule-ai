@@ -163,6 +163,29 @@ export async function POST(request: Request) {
       };
     });
 
+    // Отсутствия (отпуск, больничный) переопределяют доступность
+    try {
+      const absences = await prisma.absence.findMany({
+        where: { startDate: { lt: weekEnd }, endDate: { gte: weekStart } },
+      });
+
+      for (const absence of absences) {
+        const planner = plannerEmployees.find((e) => e.id === absence.employeeId);
+        if (!planner) continue;
+
+        for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+          const day = new Date(weekStart);
+          day.setUTCDate(day.getUTCDate() + dayIndex);
+          if (day >= absence.startDate && day <= absence.endDate) {
+            planner.windows[dayIndex] = null;
+          }
+        }
+      }
+    } catch (error) {
+      console.error("ABSENCES_LOAD_ERROR:", error);
+      warnings.push("Отсутствия не учтены: таблица отсутствий ещё не создана в базе");
+    }
+
     const plan = planWeekBest(plannerEmployees);
     warnings.push(...plan.warnings);
 

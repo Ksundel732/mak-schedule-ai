@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { POSITIONS, getBreakParts } from "../src/lib/planner";
+import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS } from "../src/lib/planner";
 
 type Shift = { id: number; employeeId: number; date: string; startTime: string; endTime: string; roleName: string; employee?: { name: string } };
 type Staff = {
@@ -21,7 +21,7 @@ const fmtDate = (key: string) => `${key.slice(8, 10)}.${key.slice(5, 7)}.${key.s
 export default function Reports() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [tab, setTab] = useState<"sub" | "breaks" | "training">("sub");
+  const [tab, setTab] = useState<"stations" | "sub" | "breaks" | "training">("stations");
   const [day, setDay] = useState("");
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [error, setError] = useState("");
@@ -55,6 +55,33 @@ export default function Reports() {
     }).sort((x, y) => x.today.length - y.today.length || x.hours - y.hours);
   }, [staff, shifts, day]);
 
+  // Смены по станциям + покрытие: нужно / есть по 30-минутным отрезкам
+  const stations = useMemo(() => {
+    const groups = [...GROUPS.map((g) => ({ id: g.id as string, label: g.label })), { id: "other", label: "Прочие позиции" }];
+    return groups
+      .map((g) => ({ ...g, list: dayShifts.filter((s) => (groupOfSkill(s.roleName) ?? "other") === g.id) }))
+      .filter((g) => g.list.length > 0);
+  }, [dayShifts]);
+
+  const coverage = useMemo(() => {
+    const need = buildNeed(weekdayOf(day || "1970-01-05"));
+    return Array.from({ length: SLOT_COUNT }, (_, slot) => {
+      const t = OPEN_MIN + slot * 30;
+      const want = GROUPS.reduce((sum, g) => sum + need[g.id][slot], 0);
+      const have = dayShifts.filter((s) => toMin(s.startTime) <= t && toMin(s.endTime) >= t + 30).length;
+      return { want, have };
+    });
+  }, [dayShifts, day]);
+
+  const problem = (s: Shift) => {
+    const p = staff.find((x) => x.id === s.employeeId);
+    const len = toMin(s.endTime) - toMin(s.startTime);
+    if (len > 12 * 60) return "Смена длиннее 12 часов";
+    if (p?.isMinor && len > MINOR_LIMITS.maxHours * 60) return "Несовершеннолетний: больше 8 часов";
+    if (p?.isMinor && toMin(s.endTime) > MINOR_LIMITS.endMin) return "Несовершеннолетний: после 22:00";
+    return "";
+  };
+
   const trained = (p: Staff, code: string) => {
     const pos = POSITIONS.find((x) => x.code === code)!;
     return p.skills.includes(`${pos.code} ${pos.title}`);
@@ -71,11 +98,65 @@ export default function Reports() {
     <section style={card}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: "0 12px 0 0", fontSize: 22 }}>Отчёты</h2>
+        <button type="button" style={tabBtn(tab === "stations")} onClick={() => setTab("stations")}>По станциям</button>
         <button type="button" style={tabBtn(tab === "sub")} onClick={() => setTab("sub")}>Готовы выйти на замену</button>
         <button type="button" style={tabBtn(tab === "breaks")} onClick={() => setTab("breaks")}>Перерывы</button>
         <button type="button" style={tabBtn(tab === "training")} onClick={() => setTab("training")}>Обучение</button>
       </div>
       {error && <div style={{ color: "#b3261e" }}>{error}</div>}
+
+      {tab === "stations" && (
+        <>
+          <p style={{ color: "#777", fontSize: 14 }}>
+            Смены дня по станциям. Синий — смена в порядке, красный — нарушение правил, серая полоса сверху — часы, когда людей меньше, чем нужно. {daySelect}
+          </p>
+          {(() => {
+            const total = CLOSE_MIN - OPEN_MIN;
+            const left = (m: number) => `${((m - OPEN_MIN) / total) * 100}%`;
+            const gapSlots = coverage.filter((c) => c.have < c.want).length;
+            return (
+              <div style={{ overflowX: "auto" }}>
+                <div style={{ minWidth: 720 }}>
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+                    <div style={{ width: 230, fontSize: 13, fontWeight: 700 }}>Покрытие (пробелов: {gapSlots / 2} ч)</div>
+                    <div style={{ flex: 1, display: "flex", height: 18, borderRadius: 6, overflow: "hidden", border: "1px solid #e5e5e5" }}>
+                      {coverage.map((c, i) => (
+                        <div key={i} title={`${String(7 + Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"} — нужно ${c.want}, есть ${c.have}`}
+                          style={{ flex: 1, background: c.have >= c.want ? "#cfe9d8" : "#9aa0a6" }} />
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", marginLeft: 230, fontSize: 11, color: "#777", marginBottom: 6, position: "relative", height: 14 }}>
+                    <div style={{ position: "relative", flex: 1 }}>
+                      {[7, 9, 11, 13, 15, 17, 19, 21, 23].map((h) => <span key={h} style={{ position: "absolute", left: left(h * 60), transform: "translateX(-50%)" }}>{h}:00</span>)}
+                    </div>
+                  </div>
+                  {stations.map((g) => (
+                    <div key={g.id} style={{ marginBottom: 14 }}>
+                      <div style={{ fontWeight: 700, background: "#f4f8f5", padding: "6px 10px", borderRadius: 8 }}>{g.label}</div>
+                      {g.list.map((sh) => {
+                        const bad = problem(sh);
+                        return (
+                          <div key={sh.id} style={{ display: "flex", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #f0f0f0" }} title={bad || undefined}>
+                            <div style={{ width: 230, fontSize: 13 }}>
+                              <strong>{sh.employee?.name}</strong>
+                              <div style={{ color: "#777", fontSize: 12 }}>{sh.roleName} · {sh.startTime}–{sh.endTime}{bad ? ` · ${bad}` : ""}</div>
+                            </div>
+                            <div style={{ flex: 1, position: "relative", height: 16, background: "#f6f6f6", borderRadius: 4 }}>
+                              <div style={{ position: "absolute", top: 0, bottom: 0, left: left(toMin(sh.startTime)), width: `${((toMin(sh.endTime) - toMin(sh.startTime)) / total) * 100}%`, background: bad ? "#d93025" : "#2f6fd6", borderRadius: 4 }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                  {stations.length === 0 && <div style={{ color: "#777", padding: 12 }}>В этот день смен нет.</div>}
+                </div>
+              </div>
+            );
+          })()}
+        </>
+      )}
 
       {tab === "sub" && (
         <>

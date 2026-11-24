@@ -43,6 +43,13 @@ export default function WeekSchedule({ shifts, onRefresh }: { shifts: Shift[]; o
   const [form, setForm] = useState({ startTime: "10:00", endTime: "18:00", roleName: ALL_POSITIONS[0] });
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [absences, setAbsences] = useState<{ employeeId: number; type: string; startDate: string; endDate: string }[]>([]);
+  const absenceOn = (id: number, key: string) =>
+    absences.find((a) => a.employeeId === id && a.startDate.slice(0, 10) <= key && key <= a.endDate.slice(0, 10));
+
+  useEffect(() => {
+    fetch("/api/absences", { cache: "no-store" }).then((r) => r.json()).then((d) => Array.isArray(d.absences) && setAbsences(d.absences)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch("/api/staff", { cache: "no-store" }).then((r) => r.json()).then((d) => Array.isArray(d.employees) && setPeople(d.employees)).catch(() => {});
@@ -148,6 +155,11 @@ export default function WeekSchedule({ shifts, onRefresh }: { shifts: Shift[]; o
                 <td style={{ padding: 10, borderBottom: "1px solid #eee", fontWeight: 600 }}>{row.name}</td>
                 {row.byDay.map((list, i) => (
                   <td key={i} style={{ padding: 6, borderBottom: "1px solid #eee", textAlign: "center", verticalAlign: "top", background: dayKeys[i] === todayKey ? "#f3fbf6" : undefined }}>
+                    {absenceOn(row.id, dayKeys[i]) && (
+                      <div style={{ background: "#fff3d6", color: "#8a5a00", borderRadius: 8, padding: "3px 6px", marginBottom: 4, fontSize: 12, fontWeight: 700 }}>
+                        {absenceOn(row.id, dayKeys[i])!.type === "SICK" ? "Больничный" : absenceOn(row.id, dayKeys[i])!.type === "VACATION" ? "Отпуск" : "Отсутствует"}
+                      </div>
+                    )}
                     {list.map((s) => (
                       <div key={s.id} onClick={() => open(row, dayKeys[i], s)} title="Изменить смену"
                         style={{ background: "#e8f5ec", borderRadius: 8, padding: "4px 6px", marginBottom: 4, fontSize: 13, cursor: "pointer" }}>
