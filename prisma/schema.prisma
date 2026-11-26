@@ -146,3 +146,12 @@ model FixedShift {
 
   @@index([employeeId])
 }
+
+// Ознакомление сотрудника с расписанием недели («Ознакомлен и согласен»)
+model ScheduleAck {
+  employeeId Int
+  weekStart  String
+  ackedAt    DateTime @default(now())
+
+  @@id([employeeId, weekStart])
+}

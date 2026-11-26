@@ -8,6 +8,7 @@ import Reports from "./Reports";
 import Absences from "./Absences";
 import Forecast from "./Forecast";
 import FixedShifts from "./FixedShifts";
+import MySchedule from "./MySchedule";
 import { EMPLOYMENT_LABELS } from "../src/lib/profile-table";
 import { RegisterPanel, TrainingPanel } from "./StaffPanels";
 import { splitComment } from "../src/lib/request-meta";
@@ -1676,35 +1677,7 @@ async function submitRequest(e: React.FormEvent) {
                   Мой график
                 </h2>
 
-                {myShifts.length === 0 ? (
-                  <p>
-                    Смен пока нет. График появится
-                    здесь, когда менеджер его утвердит.
-                  </p>
-                ) : (
-                  <div className="availability">
-                    {myShifts.map((shift) => {
-                      const shiftDate = new Date(shift.date);
-                      const dateLabel = Number.isNaN(shiftDate.getTime())
-                        ? String(shift.date)
-                        : shiftDate.toLocaleDateString("ru-RU", {
-                            timeZone: "UTC",
-                            weekday: "short",
-                            day: "2-digit",
-                            month: "2-digit",
-                          });
-
-                      return (
-                        <div key={shift.id}>
-                          <b>{dateLabel}</b>
-                          <span>
-                            {shift.startTime}–{shift.endTime} · {shift.roleName}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <MySchedule shifts={myShifts} employeeId={Number(currentEmployeeId)} />
 
               </div>
 

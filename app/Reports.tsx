@@ -34,11 +34,17 @@ const fmtDate = (key: string) => `${key.slice(8, 10)}.${key.slice(5, 7)}.${key.s
 export default function Reports() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [tab, setTab] = useState<"people" | "stations" | "summary" | "stats" | "sub" | "breaks" | "training">("stations");
+  const [tab, setTab] = useState<"acks" | "people" | "stations" | "summary" | "stats" | "sub" | "breaks" | "training">("stations");
   const [day, setDay] = useState("");
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [error, setError] = useState("");
   const [forecastVersion, setForecastVersion] = useState(0);
+  const [acks, setAcks] = useState<{ employeeId: number; weekStart: string; ackedAt: string }[]>([]);
+  const [ackWeek, setAckWeek] = useState("");
+
+  useEffect(() => {
+    fetch("/api/ack", { cache: "no-store" }).then((r) => r.json()).then((d) => setAcks(d.acks ?? [])).catch(() => {});
+  }, [tab]);
   const [profiles, setProfiles] = useState<Record<number, Record<string, string | null>>>({});
 
   useEffect(() => {
@@ -156,6 +162,7 @@ export default function Reports() {
     <section style={card}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: "0 12px 0 0", fontSize: 22 }}>Отчёты</h2>
+        <button type="button" style={tabBtn(tab === "acks")} onClick={() => setTab("acks")}>Ознакомление</button>
         <button type="button" style={tabBtn(tab === "people")} onClick={() => setTab("people")}>Сотрудники</button>
         <button type="button" style={tabBtn(tab === "stations")} onClick={() => setTab("stations")}>По станциям</button>
         <button type="button" style={tabBtn(tab === "summary")} onClick={() => setTab("summary")}>Сводка дня</button>
@@ -165,6 +172,49 @@ export default function Reports() {
         <button type="button" style={tabBtn(tab === "training")} onClick={() => setTab("training")}>Обучение</button>
       </div>
       {error && <div style={{ color: "#b3261e" }}>{error}</div>}
+
+      {tab === "acks" && (() => {
+        const mondayOf = (k: string) => { const d = new Date(`${k}T00:00:00Z`); const wd = d.getUTCDay(); d.setUTCDate(d.getUTCDate() + (wd === 0 ? -6 : 1 - wd)); return d.toISOString().slice(0, 10); };
+        const weeks = [...new Set(shifts.map((x) => mondayOf(dayKey(x))))].sort();
+        const week = ackWeek || weeks[weeks.length - 1] || "";
+        const people = new Map<number, { name: string; count: number }>();
+        shifts.filter((x) => mondayOf(dayKey(x)) === week).forEach((x) => {
+          const cur = people.get(x.employeeId) ?? { name: x.employee?.name ?? `ID ${x.employeeId}`, count: 0 };
+          cur.count += 1;
+          people.set(x.employeeId, cur);
+        });
+        const rows = [...people.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name, "ru"));
+        const done = rows.filter(([id]) => acks.some((a) => a.employeeId === id && a.weekStart === week)).length;
+        return (
+          <>
+            <p style={{ color: "#777", fontSize: 14 }}>
+              По политике (п. 2.12) каждый сотрудник должен ознакомиться с расписанием под подпись «Ознакомлен и согласен». Здесь видно, кто уже нажал кнопку в своём кабинете.{" "}
+              <select value={week} onChange={(e) => setAckWeek(e.target.value)} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #d5e2da" }}>
+                {weeks.map((w) => <option key={w} value={w}>Неделя с {fmtDate(w)}</option>)}
+              </select>
+            </p>
+            <p style={{ fontWeight: 700 }}>Ознакомлены: {done} из {rows.length}</p>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
+                <thead><tr>{["Сотрудник", "Смен", "Статус"].map((h) => <th key={h} style={head}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {rows.map(([id, r]) => {
+                    const ack = acks.find((a) => a.employeeId === id && a.weekStart === week);
+                    return (
+                      <tr key={id}>
+                        <td style={cell}>{r.name}</td>
+                        <td style={cell}>{r.count}</td>
+                        <td style={{ ...cell, fontWeight: 700, color: ack ? "#176b3a" : "#b3261e" }}>{ack ? `✓ ${new Date(ack.ackedAt).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "не ознакомлен"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {rows.length === 0 && <div style={{ color: "#777", padding: 12 }}>Смен пока нет.</div>}
+          </>
+        );
+      })()}
 
       {tab === "people" && (() => {
         const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
