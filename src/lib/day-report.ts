@@ -5,6 +5,7 @@
  */
 import { buildXlsx, type Cell, type CellStyle, type Sheet } from "./xlsx";
 import {
+  POSITIONS,
   GROUPS,
   OPEN_MIN,
   CLOSE_MIN,
@@ -27,7 +28,14 @@ export type ReportShift = {
   employee?: { name: string };
 };
 export type ReportStaff = { id: number; name: string; isMinor: boolean };
-export type ReportProfile = { employeeNumber?: string | null };
+export type ReportProfile = { employeeNumber?: string | null; employment?: string | null };
+
+// Шапка бланка «Расписание на день»: номер и название ресторана как в ESP.
+// Поменяйте здесь, если нужен другой ресторан.
+export const RESTAURANT_NAME = "10007 - Pershy";
+const FORM_GROUP_LABEL = "Н/П";
+const MONTHS_NOM = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+const WEEKDAYS_LOW = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"];
 
 const WEEKDAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
 const WD_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -268,4 +276,137 @@ export function buildDayReport(opts: {
   if (opts.withWeek && opts.days.length) sheets.push(weekSheet(opts.days, opts.shifts, opts.staff, opts.profiles ?? {}));
   for (const d of opts.days) sheets.push(daySheet(d, opts.shifts, opts.staff));
   return buildXlsx(sheets);
+}
+
+// ===== Бланк «Расписание на день» как в ESP: Смена / Факт / Перерывы / Факт =====
+
+const longDate = (key: string) => `${Number(key.slice(8, 10))} ${MONTHS_NOM[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)} г.`;
+// 07:00 -> 7:00, 24:00 -> 0:00 (так печатает ESP)
+const formTime = (t: string) => {
+  const m = toMin(t) % (24 * 60);
+  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+};
+
+function formSheet(day: string, shifts: ReportShift[], staff: ReportStaff[], profiles: Record<number, ReportProfile>): Sheet {
+  const wd = weekdayOf(day);
+  const weekStart = weekKeysOf(day)[0];
+  const COLS = 12;
+  const line: CellStyle = { border: true, valign: "center" };
+  const g = "D9D9D9";
+  const cellOf = (v: string | number | undefined, s: CellStyle = {}): Cell => ({ v, s: { ...line, ...s } });
+  const empty = (s: CellStyle = {}) => cellOf(undefined, s);
+
+  const rows: Sheet["rows"] = [];
+  const merges: [number, number, number, number][] = [];
+  const rowHeights: Record<number, number> = {};
+  const add = (height?: number) => {
+    rows.push(Array.from({ length: COLS }, () => null));
+    if (height) rowHeights[rows.length - 1] = height;
+    return rows.length - 1;
+  };
+  const span = (r: number, c1: number, c2: number, v: string, s: CellStyle) => {
+    rows[r][c1] = cellOf(v, s);
+    for (let c = c1 + 1; c <= c2; c++) rows[r][c] = empty(s);
+    if (c2 > c1) merges.push([r, c1, r, c2]);
+  };
+
+  const now = new Date();
+  const stamp = `${String(now.getDate()).padStart(2, "0")}.${String(now.getMonth() + 1).padStart(2, "0")}.${now.getFullYear()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+
+  let r = add(16);
+  rows[r][0] = { v: RESTAURANT_NAME, s: { size: 10 } };
+  rows[r][6] = { v: `Дата создания отчета   ${stamp}`, s: { size: 9, align: "right" } };
+  merges.push([r, 6, r, 11]);
+  r = add(24);
+  rows[r][0] = { v: "Расписание на день", s: { bold: true, size: 14, align: "center" } };
+  merges.push([r, 0, r, 11]);
+  r = add(16);
+  rows[r][0] = { v: `Отчет для недели с    ${longDate(weekStart)}`, s: { size: 10 } };
+  merges.push([r, 0, r, 8]);
+  add(6);
+  r = add(22);
+  span(r, 0, 4, WEEKDAYS_LOW[wd - 1], { size: 10 });
+  span(r, 5, 11, longDate(day), { size: 10, align: "center" });
+  r = add(20);
+  span(r, 0, 11, FORM_GROUP_LABEL, { align: "center", size: 10 });
+  const head1 = add(20);
+  const head2 = add(20);
+  rows[head1][0] = cellOf("Сотрудник", { bold: true, fill: g });
+  rows[head2][0] = empty({ fill: g });
+  merges.push([head1, 0, head2, 0]);
+  span(head1, 1, 5, "Смена", { bold: true, fill: g, align: "center" });
+  span(head1, 6, 11, "Перерывы", { bold: true, fill: g, align: "center" });
+  ["Начало", "Факт", "Конец", "Факт", "Поз", "", "Факт", "", "Факт", "", "Факт"].forEach((h, i) => {
+    rows[head2][i + 1] = cellOf(h, { bold: true, fill: g, align: "center", size: 9 });
+  });
+  const firstBody = rows.length;
+
+  const posOrder = (roleName: string) => {
+    const i = POSITIONS.findIndex((p) => p.code === roleCode(roleName));
+    return i < 0 ? 999 : i;
+  };
+  const list = shifts
+    .filter((s) => dayKey(s) === day)
+    .sort((a, b) => posOrder(a.roleName) - posOrder(b.roleName) || roleCode(a.roleName).localeCompare(roleCode(b.roleName)) || a.startTime.localeCompare(b.startTime));
+
+  const nameOf = (sh: ReportShift) => {
+    const person = staff.find((p) => p.id === sh.employeeId);
+    let name = (sh.employee?.name ?? person?.name ?? `ID ${sh.employeeId}`).trim();
+    const prof = profiles[sh.employeeId];
+    const number = prof?.employeeNumber?.trim();
+    if (number && !/^\d/.test(name)) name = `${number} ${name}`;
+    if (person?.isMinor && !/<\s*18/.test(name)) name += " <18";
+    if (prof?.employment === "FULL" && !/\bFT\b/i.test(name)) name += " FT";
+    return name;
+  };
+
+  const bodyRow = (sh?: ReportShift, minor = false) => {
+    const br = add(21);
+    if (!sh) {
+      for (let c = 0; c < COLS; c++) rows[br][c] = empty();
+      return;
+    }
+    const e = toMin(sh.endTime);
+    const parts = getBreakParts(e - toMin(sh.startTime), minor).sort((a, b) => a - b);
+    rows[br][0] = cellOf(nameOf(sh), { bold: true });
+    rows[br][1] = cellOf(formTime(sh.startTime), { align: "center" });
+    rows[br][2] = empty();
+    rows[br][3] = cellOf(formTime(sh.endTime), { align: "center" });
+    rows[br][4] = empty();
+    rows[br][5] = cellOf(roleCode(sh.roleName), { align: "center" });
+    for (let k = 0; k < 3; k++) {
+      rows[br][6 + k * 2] = cellOf(parts[k], { align: "center" });
+      rows[br][7 + k * 2] = empty();
+    }
+  };
+
+  let prev = "";
+  for (const sh of list) {
+    const code = roleCode(sh.roleName);
+    if (prev && code !== prev) bodyRow(); // пустая строка между позициями
+    prev = code;
+    bodyRow(sh, staff.find((p) => p.id === sh.employeeId)?.isMinor ?? false);
+  }
+  for (let i = 0; i < (list.length ? 3 : 8); i++) bodyRow(); // запас строк для ручных записей
+  void firstBody;
+
+  return {
+    name: `Бланк ${WD_SHORT[wd - 1]} ${day.slice(8, 10)}.${day.slice(5, 7)}`,
+    rows,
+    merges,
+    rowHeights,
+    colWidths: [30, 8.5, 8.5, 8.5, 8.5, 7, 5.5, 8.5, 5.5, 8.5, 5.5, 8.5],
+    landscape: false,
+    printTitleRows: [0, head2],
+    footer: { left: "Расписание на день", right: "Страница &P of &N" },
+  };
+}
+
+export function buildDayForm(opts: {
+  days: string[];
+  shifts: ReportShift[];
+  staff: ReportStaff[];
+  profiles?: Record<number, ReportProfile>;
+}): Uint8Array {
+  return buildXlsx(opts.days.map((d) => formSheet(d, opts.shifts, opts.staff, opts.profiles ?? {})));
 }

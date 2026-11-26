@@ -31,6 +31,10 @@ export type Sheet = {
   freeze?: { rows?: number; cols?: number };
   landscape?: boolean;
   fitToWidth?: boolean;
+  // строки (с 0), которые повторяются в начале каждой печатной страницы
+  printTitleRows?: [number, number];
+  // колонтитул внизу страницы; &P — номер страницы, &N — всего страниц
+  footer?: { left?: string; right?: string };
 };
 
 const esc = (s: string) =>
@@ -187,7 +191,9 @@ export function buildXlsx(sheets: Sheet[]): Uint8Array {
       `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${colLetter(maxCols - 1)}${Math.max(1, sh.rows.length)}"/>${pane}` +
       `<sheetFormatPr defaultRowHeight="13.5"/>${cols}<sheetData>${rowsXml}</sheetData>${merges}` +
       `<pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>` +
-      `<pageSetup paperSize="9" orientation="${sh.landscape === false ? "portrait" : "landscape"}" fitToWidth="1" fitToHeight="0"/></worksheet>`
+      `<pageSetup paperSize="9" orientation="${sh.landscape === false ? "portrait" : "landscape"}" fitToWidth="1" fitToHeight="0"/>` +
+      (sh.footer ? `<headerFooter><oddFooter>${esc(`${sh.footer.left ? `&L${sh.footer.left}` : ""}${sh.footer.right ? `&R${sh.footer.right}` : ""}`)}</oddFooter></headerFooter>` : "") +
+      `</worksheet>`
     );
   });
 
@@ -211,6 +217,10 @@ export function buildXlsx(sheets: Sheet[]): Uint8Array {
     return n;
   });
 
+  const titles = sheets.some((sh) => sh.printTitleRows)
+    ? `<definedNames>${sheets.map((sh, i) => (sh.printTitleRows ? `<definedName name="_xlnm.Print_Titles" localSheetId="${i}">'${esc(names[i]).replace(/'/g, "''")}'!$${sh.printTitleRows[0] + 1}:$${sh.printTitleRows[1] + 1}</definedName>` : "")).join("")}</definedNames>`
+    : "";
+
   const files: { name: string; data: Uint8Array }[] = [
     {
       name: "[Content_Types].xml",
@@ -227,7 +237,7 @@ export function buildXlsx(sheets: Sheet[]): Uint8Array {
     {
       name: "xl/workbook.xml",
       data: enc.encode(
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${esc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${esc(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets>${titles}</workbook>`
       ),
     },
     {
