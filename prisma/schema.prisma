@@ -129,3 +129,16 @@ model EmployeeProfile {
   hireDate   DateTime?
   updatedAt  DateTime  @updatedAt
 }
+
+// Фиксированные смены: повторяются каждую неделю независимо от прогноза
+model FixedShift {
+  id         Int      @id @default(autoincrement())
+  employeeId Int
+  dayOfWeek  Int
+  startTime  String
+  endTime    String
+  roleName   String
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId])
+}

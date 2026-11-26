@@ -5,6 +5,8 @@ import {
   setDailyOrders,
   toMinutes,
   type PlannerEmployee,
+  toMinutes,
+  type PlannerEmployee,
 } from "../../../../src/lib/planner";
 
 export const runtime = "nodejs";
@@ -193,6 +195,28 @@ export async function POST(request: Request) {
     } catch (error) {
       console.error("ABSENCES_LOAD_ERROR:", error);
       warnings.push("Отсутствия не учтены: таблица отсутствий ещё не создана в базе");
+    }
+
+    // Фиксированные смены (повторяются каждую неделю)
+    try {
+      await prisma.$executeRawUnsafe(
+        `CREATE TABLE IF NOT EXISTS "FixedShift" ("id" SERIAL NOT NULL, "employeeId" INTEGER NOT NULL, "dayOfWeek" INTEGER NOT NULL, "startTime" TEXT NOT NULL, "endTime" TEXT NOT NULL, "roleName" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "FixedShift_pkey" PRIMARY KEY ("id"))`
+      );
+      const fixedRows = await prisma.fixedShift.findMany();
+
+      for (const row of fixedRows) {
+        const planner = plannerEmployees.find((e) => e.id === row.employeeId) as PlannerEmployee | undefined;
+        if (!planner || row.dayOfWeek < 1 || row.dayOfWeek > 7) continue;
+
+        planner.fixed = planner.fixed ?? new Array(7).fill(null);
+        planner.fixed[row.dayOfWeek - 1] = {
+          start: toMinutes(row.startTime),
+          end: toMinutes(row.endTime),
+          roleName: row.roleName,
+        };
+      }
+    } catch (error) {
+      console.error("FIXED_SHIFTS_LOAD_ERROR:", error);
     }
 
     const plan = planWeekBest(plannerEmployees);

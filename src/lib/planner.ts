@@ -301,6 +301,8 @@ export type PlannerEmployee = {
   windows: ({ start: number; end: number } | null)[];
   // Сколько рабочих дней подряд было перед началом недели
   prevStreak: number;
+  // Фиксированные смены по дням недели (минуты от полуночи), если есть
+  fixed?: ({ start: number; end: number; roleName: string } | null)[];
 };
 
 export type PlannedShift = {
@@ -368,10 +370,47 @@ export function planWeek(
     const need = buildNeed(dayIndex + 1);
     const assigned = emptyByGroup(() => new Array<number>(SLOT_COUNT).fill(0));
 
+    // Фиксированные смены ставятся первыми и считаются в нагрузку по позиции
+    const scheduledFixed = new Set<number>();
+
+    for (const employee of employees) {
+      const fx = employee.fixed?.[dayIndex];
+      if (!fx) continue;
+
+      if (!employee.windows[dayIndex]) {
+        warnings.push(
+          `${employee.name}: фиксированная смена на ${DAY_SHORT[dayIndex]} пропущена (сотрудник недоступен)`
+        );
+        continue;
+      }
+
+      shifts.push({
+        employeeId: employee.id,
+        dayIndex,
+        startTime: toTime(fx.start),
+        endTime: toTime(fx.end),
+        breakMins: getBreakMinutes(fx.end - fx.start, employee.isMinor),
+        roleName: fx.roleName,
+      });
+
+      const fixedGroup = groupOfSkill(fx.roleName);
+      if (fixedGroup) {
+        const from = Math.max(0, Math.floor((fx.start - OPEN_MIN) / SLOT_MIN));
+        const to = Math.min(SLOT_COUNT, Math.ceil((fx.end - OPEN_MIN) / SLOT_MIN));
+        for (let slot = from; slot < to; slot++) assigned[fixedGroup][slot] += 1;
+      }
+
+      hoursSoFar.set(employee.id, (hoursSoFar.get(employee.id) ?? 0) + (fx.end - fx.start) / 60);
+      worked.get(employee.id)![dayIndex] = true;
+      scheduledFixed.add(employee.id);
+    }
+
     type Limits = { startSlot: number; endSlot: number; maxLen: number };
     const remaining = new Map<number, Limits>();
 
     for (const employee of employees) {
+      if (scheduledFixed.has(employee.id)) continue;
+
       const window = employee.windows[dayIndex];
       const groups = groupsOf.get(employee.id) ?? [];
 
@@ -406,7 +445,7 @@ export function planWeek(
       });
     }
 
-    const scheduledToday = new Set<number>();
+    const scheduledToday = new Set<number>(scheduledFixed);
 
     while (remaining.size > 0) {
       let best: {
