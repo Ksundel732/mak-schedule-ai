@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import WeekSchedule from "./WeekSchedule";
 import ChangePassword from "./ChangePassword";
 import Reports from "./Reports";
+import StaffImport from "./StaffImport";
 import Absences from "./Absences";
 import Forecast from "./Forecast";
 import FixedShifts from "./FixedShifts";
@@ -844,7 +845,10 @@ async function submitRequest(e: React.FormEvent) {
           ))}
         </nav>
 
-        {managerView === "staff" && <RegisterPanel managerLogin={login} managerPassword={password} />}
+        {managerView === "staff" && (<>
+          <RegisterPanel managerLogin={login} managerPassword={password} />
+          <StaffImport managerLogin={login} managerPassword={password} />
+        </>)}
         {managerView === "training" && <TrainingPanel />}
         {managerView === "forecast" && <Forecast />}
         {managerView === "fixed" && <FixedShifts />}

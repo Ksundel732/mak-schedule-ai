@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { EMPLOYMENT_LABELS } from "../src/lib/profile-table";
+import { buildDayReport, weekKeysOf } from "../src/lib/day-report";
 import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS, ordersInHour, DAILY_ORDERS, setDailyOrders } from "../src/lib/planner";
 
 type Shift = { breakMins?: number; id: number; employeeId: number; date: string; startTime: string; endTime: string; roleName: string; employee?: { name: string } };
@@ -151,6 +152,29 @@ export default function Reports() {
     return p.skills.includes(`${pos.code} ${pos.title}`);
   };
 
+
+  // Скачивание печатного Excel: «Расписание на день» (по образцу ESP) и «График недели»
+  function downloadExcel(scope: "day" | "week") {
+    if (!day) return;
+    const keys = scope === "day" ? [day] : weekKeysOf(day);
+    const bytes = buildDayReport({
+      days: keys,
+      shifts,
+      staff: staff.map((p) => ({ id: p.id, name: p.name, isMinor: p.isMinor })),
+      profiles: profiles as Record<number, { employeeNumber?: string | null }>,
+      withWeek: scope === "week",
+    });
+    const blob = new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = scope === "day" ? `raspisanie-${day}.xlsx` : `raspisanie-nedelya-${keys[0]}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   const daySelect = (
     <select value={day} onChange={(e) => setDay(e.target.value)} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #d5e2da" }}>
       {days.length === 0 && <option value={day}>{fmtDate(day || new Date().toISOString().slice(0, 10))}</option>}
@@ -170,6 +194,12 @@ export default function Reports() {
         <button type="button" style={tabBtn(tab === "sub")} onClick={() => setTab("sub")}>Готовы выйти на замену</button>
         <button type="button" style={tabBtn(tab === "breaks")} onClick={() => setTab("breaks")}>Перерывы</button>
         <button type="button" style={tabBtn(tab === "training")} onClick={() => setTab("training")}>Обучение</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16, padding: 12, background: "#f4f8f5", borderRadius: 12 }}>
+        <strong style={{ fontSize: 14 }}>Печатная форма (Excel):</strong>
+        {daySelect}
+        <button type="button" onClick={() => downloadExcel("day")} disabled={!day} style={{ ...tabBtn(true), opacity: day ? 1 : 0.5 }}>Скачать расписание на день</button>
+        <button type="button" onClick={() => downloadExcel("week")} disabled={!day} style={{ ...tabBtn(false), opacity: day ? 1 : 0.5 }}>Скачать всю неделю</button>
       </div>
       {error && <div style={{ color: "#b3261e" }}>{error}</div>}
 
