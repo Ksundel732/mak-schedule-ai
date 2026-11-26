@@ -93,6 +93,38 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
     }
   }
 
+  // Данные сотрудников (телефон, даты) и их редактирование
+  type Prof = { phone: string; birthDate: string; hireDate: string };
+  const [profiles, setProfiles] = useState<Record<number, Prof>>({});
+  const [editId, setEditId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Prof>({ phone: "", birthDate: "", hireDate: "" });
+  const [profMsg, setProfMsg] = useState("");
+
+  const loadProfiles = useCallback(async () => {
+    try {
+      const d = await fetch("/api/profile", { cache: "no-store" }).then((r) => r.json());
+      const map: Record<number, Prof> = {};
+      (d.profiles ?? []).forEach((p: { employeeId: number; phone: string | null; birthDate: string | null; hireDate: string | null }) => {
+        map[p.employeeId] = { phone: p.phone ?? "", birthDate: p.birthDate?.slice(0, 10) ?? "", hireDate: p.hireDate?.slice(0, 10) ?? "" };
+      });
+      setProfiles(map);
+    } catch {}
+  }, []);
+  useEffect(() => { loadProfiles(); }, [loadProfiles]);
+
+  async function saveProfile(id: number) {
+    setProfMsg("");
+    try {
+      const r = await fetch("/api/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ employeeId: id, ...draft }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Ошибка");
+      setEditId(null);
+      loadProfiles();
+    } catch (err) {
+      setProfMsg(err instanceof Error ? err.message : "Ошибка");
+    }
+  }
+
   async function resetPassword(s: Staff) {
     const newPassword = window.prompt(`Новый пароль для ${s.name} (от 4 символов):`);
     if (!newPassword) return;
@@ -166,13 +198,30 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
         {loadError && <div style={{ color: "#b3261e" }}>{loadError}</div>}
         <div style={{ display: "grid", gap: 6 }}>
           {staff.map((s) => (
-            <div key={s.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #eee" }}>
+          <div key={s.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #eee" }}>
               <span><strong>{s.name}</strong>{s.isMinor ? " · несовершеннолетний" : ""}</span>
               <span style={{ color: "#777", display: "flex", gap: 10, alignItems: "center" }}>
                 {s.username}
+                <button type="button" onClick={() => { setEditId(s.id); setProfMsg(""); setDraft(profiles[s.id] ?? { phone: "", birthDate: "", hireDate: "" }); }} style={{ border: "1px solid #d5e2da", background: "white", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13 }}>Данные</button>
                 <button type="button" onClick={() => resetPassword(s)} style={{ border: "1px solid #d5e2da", background: "white", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13 }}>Сбросить пароль</button>
               </span>
             </div>
+            {editId === s.id && (
+              <div style={{ background: "#f4f8f5", borderRadius: 12, padding: 12, display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 }}>
+                  <input style={input} placeholder="Телефон" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
+                  <label style={{ fontSize: 13, color: "#777" }}>Дата рождения<input type="date" style={input} value={draft.birthDate} onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })} /></label>
+                  <label style={{ fontSize: 13, color: "#777" }}>Принят на работу<input type="date" style={input} value={draft.hireDate} onChange={(e) => setDraft({ ...draft, hireDate: e.target.value })} /></label>
+                </div>
+                {profMsg && <div style={{ color: "#b3261e" }}>{profMsg}</div>}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={() => saveProfile(s.id)} style={green}>Сохранить</button>
+                  <button type="button" onClick={() => setEditId(null)} style={{ ...green, background: "white", color: "#30493a", border: "1px solid #d5e2da" }}>Отмена</button>
+                </div>
+              </div>
+            )}
+          </div>
           ))}
         </div>
       </section>
