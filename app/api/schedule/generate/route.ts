@@ -1,10 +1,6 @@
-import { NextResponse } from "next/server";
-import { prisma } from "../../../../src/lib/prisma";
 import {
   planWeekBest,
   setDailyOrders,
-  toMinutes,
-  type PlannerEmployee,
   toMinutes,
   type PlannerEmployee,
 } from "../../../../src/lib/planner";
