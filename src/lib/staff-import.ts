@@ -11,11 +11,62 @@ export type ImportRow = {
   employment?: string;
   email?: string;
   skills?: string[];
+  availability?: DayAvailability[];
   username?: string;
   password?: string;
 };
 
-export const TEMPLATE_HEADERS = ["Таб. №", "Фамилия Имя", "Телефон", "Дата рождения", "Дата приёма", "Должность", "Занятость", "Email", "Позиции (коды через запятую)"];
+export type DayAvailability = { dayOfWeek: number; isOff: boolean; startTime: string | null; endTime: string | null };
+
+export const TEMPLATE_HEADERS = ["Таб. №", "Фамилия Имя", "Телефон", "Дата рождения", "Дата приёма", "Должность", "Занятость", "Email", "Позиции (коды через запятую)", "Доступность"];
+
+const DAY_INDEX: Record<string, number> = { пн: 1, вт: 2, ср: 3, чт: 4, пт: 5, сб: 6, вс: 7 };
+
+// «Доступность»: «07:00-23:00» — каждый день; «Пн-Пт 15:00-22:00; Сб,Вс 08:00-22:00; Ср вых».
+// Если названы конкретные дни, остальные считаются выходными.
+export function parseAvailability(raw: string): { value?: DayAvailability[]; error?: string } {
+  const text = String(raw ?? "").trim();
+  if (!text) return {};
+  const days: (DayAvailability | null)[] = Array(7).fill(null);
+  let anyDays = false;
+  let bare: DayAvailability | null = null;
+
+  for (const part of text.split(/[;\n]+/).map((x) => x.trim()).filter(Boolean)) {
+    const m = /^(?:([а-яё]{2}(?:\s*[-–—,]\s*[а-яё]{2})*)\s+)?(.+)$/i.exec(part);
+    if (!m) return { error: `не понял «${part}»` };
+    const dayPart = (m[1] ?? "").toLowerCase();
+    const rest = m[2].trim().toLowerCase();
+
+    let timeInfo: { isOff: boolean; startTime: string | null; endTime: string | null };
+    if (/^(вых|выходной|off|нет)/.test(rest)) timeInfo = { isOff: true, startTime: null, endTime: null };
+    else {
+      const t = /^(\d{1,2})(?::(\d{2}))?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?$/.exec(rest);
+      if (!t) return { error: `не понял время «${rest}»` };
+      const fmt = (h: string, mm?: string) => `${h.padStart(2, "0")}:${mm ?? "00"}`;
+      const start = fmt(t[1], t[2]);
+      const end = fmt(t[3], t[4]);
+      if (Number(t[1]) > 24 || Number(t[3]) > 24 || start >= end) return { error: `время «${rest}»: начало должно быть раньше конца` };
+      timeInfo = { isOff: false, startTime: start, endTime: end };
+    }
+
+    if (!dayPart) { bare = { dayOfWeek: 0, ...timeInfo }; continue; }
+    anyDays = true;
+    const selected = new Set<number>();
+    for (const piece of dayPart.split(",").map((x) => x.trim()).filter(Boolean)) {
+      const range = piece.split(/\s*[-–—]\s*/);
+      const a = DAY_INDEX[range[0]];
+      const b = range.length > 1 ? DAY_INDEX[range[1]] : a;
+      if (!a || !b) return { error: `не понял день «${piece}»` };
+      for (let d = a; ; d = d === 7 ? 1 : d + 1) { selected.add(d); if (d === b) break; }
+    }
+    selected.forEach((d) => { days[d - 1] = { dayOfWeek: d, ...timeInfo }; });
+  }
+
+  const base = bare && !anyDays ? bare : null;
+  return {
+    value: days.map((d, i) => (d ? d : base ? { ...base, dayOfWeek: i + 1 } : { dayOfWeek: i + 1, isOff: true, startTime: null, endTime: null })),
+  };
+}
 
 type Field = keyof ImportRow;
 
@@ -28,6 +79,7 @@ const FIELD_RULES: [Field, RegExp][] = [
   ["email", /mail|почт/i],
   ["position", /должн/i],
   ["employment", /занят|тип/i],
+  ["availability", /доступн|возможн/i],
   ["skills", /позици|обуч|станц/i],
   ["username", /логин/i],
   ["password", /парол/i],
@@ -106,6 +158,11 @@ export function parseTableRows(table: string[][]): { rows: ImportRow[]; problems
     if (r.birthDate) { row.birthDate = parseDate(r.birthDate); if (!row.birthDate) problems.push(`Строка ${i + 2}: не понял дату рождения «${r.birthDate}»`); }
     if (r.hireDate) { row.hireDate = parseDate(r.hireDate); if (!row.hireDate) problems.push(`Строка ${i + 2}: не понял дату приёма «${r.hireDate}»`); }
     if (r.employment) { row.employment = parseEmployment(r.employment); if (!row.employment) problems.push(`Строка ${i + 2}: не понял занятость «${r.employment}»`); }
+    if (r.availability) {
+      const a = parseAvailability(r.availability);
+      if (a.error) problems.push(`Строка ${i + 2}: доступность — ${a.error}`);
+      else row.availability = a.value;
+    }
     if (r.skills) row.skills = r.skills.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
     rows.push(row);
   });
@@ -145,11 +202,11 @@ export function buildTemplate(): Uint8Array {
   return buildXlsx([
     {
       name: "Сотрудники",
-      colWidths: [9, 26, 17, 14, 14, 34, 16, 24, 30],
+      colWidths: [9, 26, 17, 14, 14, 34, 16, 24, 30, 40],
       rows: [
         TEMPLATE_HEADERS.map((h) => ({ v: h, s: head })),
-        ["101", "Иванова Анна", "+375 29 111-11-11", "15.03.1999", "01.09.2024", "Член бригады ресторана 3 разряда", "Неполное время", "anna@example.com", "C1, C2, DT"].map((v) => ({ v, s: cell })),
-        ["102", "Петров Илья", "+375 33 222-22-22", "20.05.2009", "10.06.2025", "Член бригады ресторана 3 разряда", "Совместитель", "", "I, Z, S"].map((v) => ({ v, s: cell })),
+        ["101", "Иванова Анна", "+375 29 111-11-11", "15.03.1999", "01.09.2024", "Член бригады ресторана 3 разряда", "Неполное время", "anna@example.com", "C1, C2, DT", "Пн-Пт 15:00-22:00; Сб,Вс 08:00-22:00"].map((v) => ({ v, s: cell })),
+        ["102", "Петров Илья", "+375 33 222-22-22", "20.05.2009", "10.06.2025", "Член бригады ресторана 3 разряда", "Совместитель", "", "I, Z, S", "07:00-23:00"].map((v) => ({ v, s: cell })),
       ],
       freeze: { rows: 1 },
     },

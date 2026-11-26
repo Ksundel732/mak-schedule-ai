@@ -423,7 +423,8 @@ export function planWeek(
         continue;
       }
 
-      let endMin = Math.min(window.end, CLOSE_MIN);
+      // доступность «до 23:59» означает «до закрытия» (в интерфейсе нельзя ввести 24:00)
+      let endMin = Math.min(window.end >= 23 * 60 + 59 ? CLOSE_MIN : window.end, CLOSE_MIN);
       if (employee.isMinor) endMin = Math.min(endMin, MINOR_END_MIN);
 
       const startSlot = Math.ceil(

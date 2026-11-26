@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { readXlsxRows } from "../src/lib/xlsx";
 import { buildTemplate, parseDelimited, parseTableRows, type ImportRow } from "../src/lib/staff-import";
+import { DEMO_TABLE } from "../src/lib/demo-roster";
 import { EMPLOYMENT_LABELS } from "../src/lib/profile-table";
 
 type Result = { line: number; name: string; status: "created" | "updated" | "error"; username?: string; password?: string; error?: string };
@@ -99,6 +100,7 @@ export default function StaffImport({ managerLogin, managerPassword, onDone }: {
           Выбрать файл
           <input type="file" accept=".xlsx,.csv,.txt,.tsv" onChange={onFile} style={{ display: "none" }} />
         </label>
+        <button type="button" style={btn(false)} onClick={() => applyTable(DEMO_TABLE)}>Подставить готовую базу (61 сотрудник)</button>
         <button type="button" style={btn(false)} onClick={() => download(buildTemplate(), "shablon-sotrudniki.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}>Скачать шаблон</button>
       </div>
       <textarea

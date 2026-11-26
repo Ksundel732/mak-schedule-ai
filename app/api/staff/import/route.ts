@@ -15,6 +15,7 @@ type Row = {
   employment?: string; // PART | COMBINED | FULL
   email?: string;
   skills?: string[]; // коды позиций: C1, I, Z ...
+  availability?: { dayOfWeek: number; isOff: boolean; startTime: string | null; endTime: string | null }[];
   username?: string;
   password?: string;
 };
@@ -42,6 +43,19 @@ const isMinorOn = (birth: Date | null) => {
   let age = now.getUTCFullYear() - birth.getUTCFullYear();
   if (now.getUTCMonth() < birth.getUTCMonth() || (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() < birth.getUTCDate())) age -= 1;
   return age < 18;
+};
+
+const TIME = /^([01]\d|2[0-4]):[0-5]\d$/;
+const cleanAvailability = (list: Row["availability"]) => {
+  if (!Array.isArray(list) || list.length !== 7) return null;
+  const out = [];
+  for (let d = 1; d <= 7; d++) {
+    const a = list.find((x) => Number(x.dayOfWeek) === d);
+    if (!a || a.isOff) { out.push({ dayOfWeek: d, isOff: true, startTime: null, endTime: null }); continue; }
+    if (!a.startTime || !a.endTime || !TIME.test(a.startTime) || !TIME.test(a.endTime) || a.startTime >= a.endTime) throw new Error(`неверное время доступности в дне ${d}`);
+    out.push({ dayOfWeek: d, isOff: false, startTime: a.startTime, endTime: a.endTime });
+  }
+  return out;
 };
 
 const skillNamesFor = (codes: string[] | undefined) => {
@@ -86,6 +100,7 @@ export async function POST(request: Request) {
     const byName = new Map<string, number>();
     employees.forEach((e) => byName.set(e.name.trim().toLowerCase(), e.id));
     const employeeIds = new Set(employees.map((e) => e.id));
+    const withNumber = new Set(byNumber.values());
 
     const results: { line: number; name: string; status: "created" | "updated" | "error"; username?: string; password?: string; error?: string }[] = [];
 
@@ -109,8 +124,14 @@ export async function POST(request: Request) {
           email: clip(row.email, 80),
         };
         const skills = skillNamesFor(row.skills);
+        const availability = cleanAvailability(row.availability);
 
-        let id = (number && byNumber.get(number)) || byName.get(name.toLowerCase()) || 0;
+        // по табельному номеру; по имени — только если у найденного сотрудника нет другого номера
+        let id = (number && byNumber.get(number)) || 0;
+        if (!id) {
+          const sameName = byName.get(name.toLowerCase()) ?? 0;
+          if (sameName && !(number && withNumber.has(sameName))) id = sameName;
+        }
         if (id && !employeeIds.has(id)) id = 0;
         let status: "created" | "updated" = "updated";
         let username: string | undefined;
@@ -132,7 +153,7 @@ export async function POST(request: Request) {
               role: "EMPLOYEE",
               isMinor: isMinorOn(birth),
               availabilities: {
-                create: Array.from({ length: 7 }, (_, d) => ({
+                create: availability ?? Array.from({ length: 7 }, (_, d) => ({
                   dayOfWeek: d + 1,
                   isOff: false,
                   startTime: "07:00",
@@ -153,6 +174,17 @@ export async function POST(request: Request) {
           });
         }
 
+        // доступность из файла заменяет прежнюю; если колонка пустая — не трогаем
+        if (availability && status === "updated") {
+          for (const a of availability) {
+            await prisma.permanentAvailability.upsert({
+              where: { employeeId_dayOfWeek: { employeeId: id, dayOfWeek: a.dayOfWeek } },
+              update: { isOff: a.isOff, startTime: a.startTime, endTime: a.endTime },
+              create: { employeeId: id, ...a },
+            });
+          }
+        }
+
         // обновление профиля: пустые ячейки не стирают уже сохранённое
         const existing = await prisma.employeeProfile.findUnique({ where: { employeeId: id } });
         const merged = {
@@ -165,7 +197,7 @@ export async function POST(request: Request) {
           email: profileData.email ?? existing?.email ?? null,
         };
         await prisma.employeeProfile.upsert({ where: { employeeId: id }, update: merged, create: { employeeId: id, ...merged } });
-        if (merged.employeeNumber) byNumber.set(merged.employeeNumber, id);
+        if (merged.employeeNumber) { byNumber.set(merged.employeeNumber, id); withNumber.add(id); }
         byName.set(name.toLowerCase(), id);
 
         if (skills) {
