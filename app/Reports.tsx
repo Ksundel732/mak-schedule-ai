@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { EMPLOYMENT_LABELS } from "../src/lib/profile-table";
 import { POSITIONS, GROUPS, buildNeed, groupOfSkill, getBreakParts, OPEN_MIN, CLOSE_MIN, SLOT_COUNT, MINOR_LIMITS, ordersInHour, DAILY_ORDERS, setDailyOrders } from "../src/lib/planner";
 
 type Shift = { breakMins?: number; id: number; employeeId: number; date: string; startTime: string; endTime: string; roleName: string; employee?: { name: string } };
@@ -38,12 +39,12 @@ export default function Reports() {
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [error, setError] = useState("");
   const [forecastVersion, setForecastVersion] = useState(0);
-  const [profiles, setProfiles] = useState<Record<number, { phone: string | null; birthDate: string | null; hireDate: string | null }>>({});
+  const [profiles, setProfiles] = useState<Record<number, Record<string, string | null>>>({});
 
   useEffect(() => {
     fetch("/api/profile", { cache: "no-store" }).then((r) => r.json()).then((d) => {
       const map: typeof profiles = {};
-      (d.profiles ?? []).forEach((p: { employeeId: number; phone: string | null; birthDate: string | null; hireDate: string | null }) => { map[p.employeeId] = p; });
+      (d.profiles ?? []).forEach((p: Record<string, string | null> & { employeeId: number }) => { map[p.employeeId] = p; });
       setProfiles(map);
     }).catch(() => {});
   }, []);
@@ -182,18 +183,27 @@ export default function Reports() {
           .sort((a, b) => (profiles[a.id]!.birthDate as string).slice(5).localeCompare((profiles[b.id]!.birthDate as string).slice(5)));
         return (
           <>
-            <p style={{ color: "#777", fontSize: 14 }}>Список сотрудников с телефонами и стажем, дни рождения по месяцам. Данные вносятся при регистрации.</p>
+            <p style={{ color: "#777", fontSize: 14 }}>Список сотрудников, стаж, дни рождения по месяцам и часы в месяце выбранного дня. Минимум по политике: 40 часов в месяц при неполном времени, 20 для совместителей (красным, если не набрано). Данные вносятся при регистрации или кнопкой «Данные» во вкладке «Сотрудники».</p>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
-                <thead><tr>{["Сотрудник", "Телефон", "Дата рождения", "Принят", "Стаж"].map((h) => <th key={h} style={head}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Таб. №", "Сотрудник", "Должность", "Занятость", "Телефон", "Дата рождения", "Принят", "Стаж", "Часов в месяце"].map((h) => <th key={h} style={head}>{h}</th>)}</tr></thead>
                 <tbody>
                   {staff.map((p) => (
                     <tr key={p.id}>
+                      <td style={cell}>{profiles[p.id]?.employeeNumber || "—"}</td>
                       <td style={cell}>{p.name}</td>
+                      <td style={cell}>{profiles[p.id]?.position || "—"}</td>
+                      <td style={cell}>{EMPLOYMENT_LABELS[profiles[p.id]?.employment ?? ""] ?? "—"}</td>
                       <td style={cell}>{profiles[p.id]?.phone || "—"}</td>
                       <td style={cell}>{ddmm(profiles[p.id]?.birthDate)}</td>
                       <td style={cell}>{ddmm(profiles[p.id]?.hireDate)}</td>
                       <td style={cell}>{seniority(profiles[p.id]?.hireDate)}</td>
+                      {(() => {
+                        const monthKey = (day || new Date().toISOString().slice(0, 10)).slice(0, 7);
+                        const hours = shifts.filter((x) => x.employeeId === p.id && dayKey(x).startsWith(monthKey)).reduce((sum, x) => sum + hoursOfShift(x), 0);
+                        const min = profiles[p.id]?.employment === "PART" ? 40 : profiles[p.id]?.employment === "COMBINED" ? 20 : 0;
+                        return <td style={{ ...cell, color: min && hours < min ? "#b3261e" : undefined }} title={min ? `Минимум по политике: ${min} ч в месяц` : undefined}>{r1(hours)}{min ? ` / ${min}` : ""}</td>;
+                      })()}
                     </tr>
                   ))}
                 </tbody>

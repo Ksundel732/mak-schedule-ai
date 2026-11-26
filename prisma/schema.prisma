@@ -127,6 +127,10 @@ model EmployeeProfile {
   phone      String?
   birthDate  DateTime?
   hireDate   DateTime?
+  employeeNumber String?
+  position   String?
+  employment String?
+  email      String?
   updatedAt  DateTime  @updatedAt
 }
 

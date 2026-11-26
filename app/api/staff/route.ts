@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../src/lib/prisma";
 import { GROUPS, OTHER_SKILLS } from "../../../src/lib/planner";
+import { ensureProfileTable } from "../../../src/lib/profile-table";
 
 export const runtime = "nodejs";
 
@@ -94,14 +95,22 @@ export async function POST(request: Request) {
       select: { id: true, name: true },
     });
 
-    if (body.phone || body.birthDate || body.hireDate) {
+    if (body.phone || body.birthDate || body.hireDate || body.employeeNumber || body.position || body.employment || body.email) {
       try {
-        await prisma.$executeRawUnsafe(
-          `CREATE TABLE IF NOT EXISTS "EmployeeProfile" ("employeeId" INTEGER NOT NULL, "phone" TEXT, "birthDate" TIMESTAMP(3), "hireDate" TIMESTAMP(3), "updatedAt" TIMESTAMP(3) NOT NULL, CONSTRAINT "EmployeeProfile_pkey" PRIMARY KEY ("employeeId"))`
-        );
+        await ensureProfileTable(prisma);
         const day = (v: unknown) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00.000Z`) : null);
+        const t = (v: unknown, max: number) => (v ? String(v).trim().slice(0, max) || null : null);
         await prisma.employeeProfile.create({
-          data: { employeeId: employee.id, phone: body.phone ? String(body.phone).slice(0, 40) : null, birthDate: day(body.birthDate), hireDate: day(body.hireDate) },
+          data: {
+            employeeId: employee.id,
+            phone: t(body.phone, 40),
+            birthDate: day(body.birthDate),
+            hireDate: day(body.hireDate),
+            employeeNumber: t(body.employeeNumber, 30),
+            position: t(body.position, 80),
+            employment: ["PART", "COMBINED", "FULL"].includes(body.employment) ? body.employment : null,
+            email: t(body.email, 80),
+          },
         });
       } catch (profileError) {
         console.error("PROFILE_CREATE_ERROR:", profileError);

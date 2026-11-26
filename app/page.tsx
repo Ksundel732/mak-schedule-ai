@@ -8,6 +8,7 @@ import Reports from "./Reports";
 import Absences from "./Absences";
 import Forecast from "./Forecast";
 import FixedShifts from "./FixedShifts";
+import { EMPLOYMENT_LABELS } from "../src/lib/profile-table";
 import { RegisterPanel, TrainingPanel } from "./StaffPanels";
 import { splitComment } from "../src/lib/request-meta";
 import { analyzeWeek, TARGET_GPIK, setDailyOrders } from "../src/lib/planner";
@@ -189,6 +190,7 @@ export default function Home() {
   const [managerRequests, setManagerRequests] = useState<any[]>([]);
   const [showForgot, setShowForgot] = useState(false);
   const [, setForecastTick] = useState(0);
+  const [myProfile, setMyProfile] = useState<Record<string, string | null> | null>(null);
 
   // После обновления страницы входим заново автоматически (пока вкладка открыта)
   useEffect(() => {
@@ -602,6 +604,15 @@ useEffect(() => {
     }, 15000);
 
     return () => clearInterval(timer);
+  }, [loggedIn, currentEmployeeId]);
+
+  // Карточка сотрудника (табельный номер, должность и т.д.) для его кабинета
+  useEffect(() => {
+    if (!loggedIn || !currentEmployeeId) return;
+    fetch(`/api/profile?employeeId=${currentEmployeeId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setMyProfile(d.profiles?.[0] ?? null))
+      .catch(() => {});
   }, [loggedIn, currentEmployeeId]);
 
   async function handleLogin(e: React.FormEvent) {
@@ -1776,6 +1787,23 @@ async function submitRequest(e: React.FormEvent) {
                   )}
 
                 </div>
+
+                {myProfile && (
+                  <div style={{ marginTop: 20, display: "grid", gap: 6, fontSize: 15 }}>
+                    <h3 style={{ margin: "0 0 4px", fontSize: 17 }}>Моя карточка</h3>
+                    {([
+                      ["Табельный номер", myProfile.employeeNumber],
+                      ["Должность", myProfile.position],
+                      ["Занятость", EMPLOYMENT_LABELS[myProfile.employment ?? ""]],
+                      ["Телефон", myProfile.phone],
+                      ["Принят на работу", myProfile.hireDate ? `${myProfile.hireDate.slice(8, 10)}.${myProfile.hireDate.slice(5, 7)}.${myProfile.hireDate.slice(0, 4)}` : null],
+                    ] as [string, string | null | undefined][])
+                      .filter(([, v]) => v)
+                      .map(([k, v]) => (
+                        <div key={k}><span style={{ color: "#777" }}>{k}: </span>{v}</div>
+                      ))}
+                  </div>
+                )}
 
               </div>
 
