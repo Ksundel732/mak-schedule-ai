@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "График смен",
-  description: "График смен сотрудников",
+  title: "MAK Schedule",
+  description: "Планирование смен сотрудников",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

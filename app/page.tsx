@@ -815,7 +815,7 @@ async function submitRequest(e: React.FormEvent) {
 
           <div>
             <div className="brand">
-              MAK Schedule AI
+              MAK Schedule
             </div>
 
             <div className="subtitle">
@@ -1337,32 +1337,6 @@ async function submitRequest(e: React.FormEvent) {
               <div className="training-row">
 
                 <span>
-                 <b>
-  {employees.find((employee) => employee.username === "katya")?.name || "Катя"}
-</b>
-                </span>
-
-                <span className="skill-yes">
-                  ✓
-                </span>
-
-                <span className="skill-no">
-                  —
-                </span>
-
-                <span className="skill-yes">
-                  ✓
-                </span>
-
-                <span className="skill-yes">
-                  ✓
-                </span>
-
-              </div>
-
-              <div className="training-row">
-
-                <span>
                   <b>
   {employees.find((employee) => employee.username === "alina")?.name || "Алина"}
 </b>
@@ -1427,7 +1401,7 @@ async function submitRequest(e: React.FormEvent) {
           <div className="ai-text">
 
             <h2>
-              AI-планировщик
+              Планировщик
             </h2>
 
             <p>
@@ -1625,7 +1599,7 @@ async function submitRequest(e: React.FormEvent) {
           <div>
 
             <div className="brand">
-              MAK Schedule AI
+              MAK Schedule
             </div>
 
             <div className="subtitle">
@@ -2126,7 +2100,7 @@ async function submitRequest(e: React.FormEvent) {
           <div className="logo-main">
             MAK{" "}
             <span>
-              Schedule AI
+              Schedule
             </span>
           </div>
 
@@ -2190,14 +2164,6 @@ async function submitRequest(e: React.FormEvent) {
           <b>
             Демо-доступ
           </b>
-
-          <div>
-            Сотрудник:
-            {" "}
-            <strong>katya</strong>
-            {" / "}
-            <strong>mak123</strong>
-          </div>
 
           <div>
             Менеджер:

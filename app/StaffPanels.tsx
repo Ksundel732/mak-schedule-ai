@@ -166,6 +166,22 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
     }
   }
 
+  async function removeStaff(s: Staff) {
+    if (!window.confirm(`Удалить сотрудника «${s.name}» навсегда?\n\nВместе с ним удалятся его смены, заявки, отсутствия и данные. Это нельзя отменить.`)) return;
+    try {
+      const r = await fetch("/api/staff", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ managerUsername: managerLogin, managerPassword, employeeId: s.id }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Ошибка");
+      await load();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Ошибка");
+    }
+  }
+
   return (
     <>
       <section style={card}>
@@ -225,6 +241,7 @@ export function RegisterPanel({ managerLogin, managerPassword }: { managerLogin:
                 {s.username}
                 <button type="button" onClick={() => { setEditId(s.id); setProfMsg(""); setDraft(profiles[s.id] ?? EMPTY_PROF); }} style={{ border: "1px solid #d5e2da", background: "white", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13 }}>Данные</button>
                 <button type="button" onClick={() => resetPassword(s)} style={{ border: "1px solid #d5e2da", background: "white", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13 }}>Сбросить пароль</button>
+                <button type="button" onClick={() => removeStaff(s)} style={{ border: "1px solid #f0c9c6", background: "white", borderRadius: 8, padding: "5px 10px", cursor: "pointer", fontSize: 13, color: "#b3261e" }}>Удалить</button>
               </span>
             </div>
             {editId === s.id && (

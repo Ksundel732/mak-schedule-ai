@@ -149,3 +149,41 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Не удалось сохранить обучение" }, { status: 500 });
   }
 }
+
+// Удаление сотрудника вместе с его сменами, заявками, отсутствиями и данными (только менеджер)
+export async function DELETE(request: Request) {
+  try {
+    const body = await request.json();
+    const employeeId = Number(body.employeeId);
+
+    const manager = await prisma.employee.findFirst({
+      where: { username: { equals: String(body.managerUsername ?? "").trim(), mode: "insensitive" } },
+    });
+    if (!manager || manager.role !== "MANAGER" || manager.password !== String(body.managerPassword ?? "")) {
+      return NextResponse.json({ error: "Нет прав менеджера" }, { status: 403 });
+    }
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+      return NextResponse.json({ error: "Не указан сотрудник" }, { status: 400 });
+    }
+
+    const target = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true, role: true } });
+    if (!target) return NextResponse.json({ error: "Сотрудник не найден" }, { status: 404 });
+    if (target.role !== "EMPLOYEE") {
+      return NextResponse.json({ error: "Аккаунт менеджера удалить нельзя" }, { status: 400 });
+    }
+
+    await ensureProfileTable(prisma);
+    await prisma.$transaction([
+      prisma.scheduleAck.deleteMany({ where: { employeeId } }),
+      prisma.fixedShift.deleteMany({ where: { employeeId } }),
+      prisma.employeeProfile.deleteMany({ where: { employeeId } }),
+      // смены, заявки, отсутствия, доступность и навыки удаляются каскадом
+      prisma.employee.delete({ where: { id: employeeId } }),
+    ]);
+
+    return NextResponse.json({ success: true, name: target.name });
+  } catch (error) {
+    console.error("STAFF_DELETE_ERROR:", error);
+    return NextResponse.json({ error: "Не удалось удалить сотрудника" }, { status: 500 });
+  }
+}

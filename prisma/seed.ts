@@ -6,13 +6,6 @@ async function main() {
   // 1. Сотрудники
   const employees = [
     {
-      name: "Катя",
-      username: "katya",
-      password: "mak123",
-      role: "EMPLOYEE" as const,
-      isMinor: true,
-    },
-    {
       name: "Менеджер",
       username: "manager",
       password: "makadmin",
@@ -73,7 +66,6 @@ async function main() {
 
   // 3. Связываем сотрудников с их демонстрационными навыками
   const employeeSkills: Record<string, string[]> = {
-    katya: ["Касса", "Выдача", "Прилавок", "Зал"],
     alina: ["Касса", "Кухня", "Выдача"],
     denis: ["Кухня", "Выдача", "Зал"],
   };
@@ -111,15 +103,6 @@ async function main() {
     string,
     { dayOfWeek: number; isOff: boolean; startTime: string | null; endTime: string | null }[]
   > = {
-    katya: [
-      { dayOfWeek: 1, isOff: true, startTime: null, endTime: null },
-      { dayOfWeek: 2, isOff: false, startTime: "17:00", endTime: "22:00" },
-      { dayOfWeek: 3, isOff: false, startTime: "17:00", endTime: "22:00" },
-      { dayOfWeek: 4, isOff: true, startTime: null, endTime: null },
-      { dayOfWeek: 5, isOff: false, startTime: "17:00", endTime: "22:00" },
-      { dayOfWeek: 6, isOff: true, startTime: null, endTime: null },
-      { dayOfWeek: 7, isOff: true, startTime: null, endTime: null },
-    ],
     alina: [
       { dayOfWeek: 1, isOff: false, startTime: "17:00", endTime: "22:00" },
       { dayOfWeek: 2, isOff: false, startTime: "17:00", endTime: "22:00" },
